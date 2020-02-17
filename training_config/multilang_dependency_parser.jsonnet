@@ -7,13 +7,13 @@
 local BASE_READER(x) = {
     "type": "ud_multilang",
     "languages": [x],
-    "alternate": true,
+    "alternate": false,
     "instances_per_file": 32,
     "is_first_pass_for_vocab": true,
     "lazy": true,
     "token_indexers": {
         "roberta": {
-            "type": "pretrained_transformer_mismatched",
+            "type": "transformer_pretrained_mismatched",
             "model_name": "xlm-roberta-base"
         }
     },
@@ -23,17 +23,23 @@ local BASE_READER(x) = {
 local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_";
 
 {
-    "dataset_reader": {
-        "type": "meta",
-        "readers": {
-            "en": BASE_READER("en"),
-            "zh": BASE_READER("zh"),
-            "fr": BASE_READER("fr")
-        }
+    "dataset_readers": {
+        "en": BASE_READER("en"),
+        "zh": BASE_READER("zh"),
+        "fr": BASE_READER("fr")
+    },
+    "validation_dataset_readers": {
+        "en": BASE_READER("en"),
+        "zh": BASE_READER("zh"),
+        "fr": BASE_READER("fr")
+    },
+    "vocabulary": {
+        "type": "from_files",
+        "directory": "data/vocabulary"
     },
     "iterator": {
         "type": "same_language",
-        "batch_size": 32,
+        "batch_size": 8,
         "sorting_keys": [["words", "num_tokens"]],
         "instances_per_epoch": 32000
     },
@@ -46,8 +52,8 @@ local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_";
             "bidirectional": true,
             "dropout": 0.33,
             "hidden_size": 200,
-            "input_size": 1074,
-            "num_layers": 3
+            "input_size": 818,
+            "num_layers": 2
         },
         "langs_for_early_stop": [
             "en",
@@ -65,25 +71,26 @@ local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_";
         "text_field_embedder": {
             "token_embedders": {
                 "roberta": {
-                    "type": "pretrained_transformer_mismatched",
-                    "model_name": "xlm-roberta-base"
+                    "type": "transformer_pretrained_mismatched",
+                    "model_name": "xlm-roberta-base",
+                    "requires_grad": false,
                 }
             }
         }
     },
     // UDTB v2.0 is available at https://github.com/ryanmcd/uni-dep-tb
     // Set TRAIN_PATHNAME='std/**/*train.conll'
-    "train_data_path": {
+    "train_data_paths": {
             "en": UD_ROOT + "English-*/*-train.conllu",
             "zh": UD_ROOT + "Chinese-*/*-train.conllu",
             "fr": UD_ROOT + "French-*/*-train.conllu"
     },
-    "validation_data_path": {
+    "validation_data_paths": {
             "en": UD_ROOT + "English-*/*-dev.conllu",
             "zh": UD_ROOT + "Chinese-*/*-dev.conllu",
             "fr": UD_ROOT + "French-*/*-dev.conllu"
     },
-    "test_data_path": {
+    "test_data_paths": {
             "en": UD_ROOT + "English-*/*-test.conllu",
             "zh": UD_ROOT + "Chinese-*/*-test.conllu",
             "fr": UD_ROOT + "French-*/*-test.conllu"
@@ -94,6 +101,15 @@ local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_";
         "num_epochs": 40,
         "optimizer": "adam",
         "patience": 10,
-        "validation_metric": "+LAS_AVG"
+        "validation_metric": "+LAS_AVG",
+        "num_gradient_accumulation_steps": 2,
+        "wrapper": {
+            "type": "reptile",
+            "grad_norm": 5.0,
+            "optimizer_cls": "Adam",
+            "optimizer_kwargs": {
+                "lr": 1e-4
+            }
+        }
     }
 }

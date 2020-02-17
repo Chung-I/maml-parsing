@@ -111,34 +111,57 @@ def datasets_from_params(params: Params) -> Dict[str, Iterable[Instance]]:
         specify the `cache_prefix`.  Note that in some rare cases this can be dangerous, as we'll
         use the `same` prefix for both train and validation dataset readers.
     """
-    dataset_reader_params = params.pop("dataset_reader")
-    validation_dataset_reader_params = params.pop("validation_dataset_reader", None)
+    dataset_readers_params = params.pop("dataset_readers")
+    validation_dataset_readers_params = params.pop("validation_dataset_readers", None)
 
-    dataset_reader = DatasetReader.from_params(dataset_reader_params)
+    dataset_readers = {key: DatasetReader.from_params(dataset_reader_params)
+        for key, dataset_reader_params in dataset_readers_params.items()}
 
-    validation_and_test_dataset_reader: DatasetReader = dataset_reader
-    if validation_dataset_reader_params is not None:
+    validation_and_test_dataset_readers: Dict[str, DatasetReader] = dataset_readers
+    if validation_dataset_readers_params is not None:
         logger.info("Using a separate dataset reader to load validation and test data.")
-        validation_and_test_dataset_reader = DatasetReader.from_params(
+        validation_and_test_dataset_readers = {key: DatasetReader.from_params(
             validation_dataset_reader_params
-        )
+        ) for key, validation_dataset_reader_params in validation_dataset_readers_params.items()}
 
-    train_data_path = params.pop("train_data_path")
-    logger.info("Reading training data from %s", train_data_path)
-    train_data = dataset_reader.read(train_data_path)
+    train_data_paths = params.pop("train_data_paths")
+    logger.info("Reading training data from %s", train_data_paths)
+    train_datas = {key: dataset_reader.read(train_data_paths[key])
+        for key, dataset_reader in dataset_readers.items()}
 
-    datasets: Dict[str, Iterable[Instance]] = {"train": train_data}
+    datasets: Dict[str, Iterable[Iterable[Instance]]] = {"train": train_datas}
 
-    validation_data_path = params.pop("validation_data_path", None)
-    if validation_data_path is not None:
-        logger.info("Reading validation data from %s", validation_data_path)
-        validation_data = validation_and_test_dataset_reader.read(validation_data_path)
-        datasets["validation"] = validation_data
+    validation_data_paths = params.pop("validation_data_paths", None)
+    if validation_data_paths is not None:
+        logger.info("Reading validation data from %s", validation_data_paths)
+        validation_datas = {key: dataset_reader.read(validation_data_paths[key])
+            for key, dataset_reader in validation_and_test_dataset_readers.items()}
+        datasets["validation"] = validation_datas
 
-    test_data_path = params.pop("test_data_path", None)
-    if test_data_path is not None:
-        logger.info("Reading test data from %s", test_data_path)
-        test_data = validation_and_test_dataset_reader.read(test_data_path)
-        datasets["test"] = test_data
+    test_data_paths = params.pop("test_data_paths", None)
+    if test_data_paths is not None:
+        logger.info("Reading test data from %s", test_data_paths)
+        test_datas = {key: dataset_reader.read(test_data_paths[key])
+            for key, dataset_reader in validation_and_test_dataset_readers.items()}
+        datasets["test"] = test_datas
 
     return datasets
+
+
+def as_flat_dict(params):
+    """
+    Returns the parameters of a flat dictionary from keys to values.
+    Nested structure is collapsed with periods.
+    """
+    flat_params = {}
+
+    def recurse(parameters, path):
+        for key, value in parameters.items():
+            newpath = path + [key]
+            if isinstance(value, dict):
+                recurse(value, newpath)
+            else:
+                flat_params[".".join(newpath)] = value
+
+    recurse(params, [])
+    return flat_params
