@@ -304,8 +304,6 @@ class MetaTrainer(TrainerBase):
         If `for_training` is `True` also applies regularization penalty.
         """
         batch = nn_util.move_to_device(batch, self.cuda_device)
-        import pdb
-        pdb.set_trace()
         output_dict = self._pytorch_model(**batch)
 
         try:

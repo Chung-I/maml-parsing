@@ -111,13 +111,16 @@ class TransformerEmbedder(TokenEmbedder):
         if type_ids is not None:
             assert token_ids.shape == type_ids.shape
 
-        if self._max_length is not None:
+        full_seq_len = token_ids.size(-1)
+        too_long = full_seq_len > self._max_length
+
+        if too_long:
             batch_size, num_segment_concat_wordpieces = token_ids.size()
             token_ids, segment_concat_mask, type_ids = self._fold_long_sequences(
                 token_ids, segment_concat_mask, type_ids
             )
 
-        transformer_mask = segment_concat_mask if self._max_length is not None else mask
+        transformer_mask = segment_concat_mask if too_long else mask
         # Shape: [batch_size, num_wordpieces, embedding_size],
         # or if self._max_length is not None:
         # [batch_size * num_segments, self._max_length, embedding_size]
@@ -125,7 +128,7 @@ class TransformerEmbedder(TokenEmbedder):
             input_ids=token_ids, token_type_ids=type_ids, attention_mask=transformer_mask
         )[0]
 
-        if self._max_length is not None:
+        if too_long:
             embeddings = self._unfold_long_sequences(
                 embeddings, segment_concat_mask, batch_size, num_segment_concat_wordpieces
             )

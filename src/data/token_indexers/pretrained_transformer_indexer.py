@@ -160,16 +160,18 @@ class PretrainedTransformerIndexer(TokenIndexer):
         The input should have a `"token_ids"` key corresponding to the token indices. They should
         have special tokens already inserted.
         """
-        if self._max_length is not None:
+        indices = output["token_ids"]
+        # Strips original special tokens
+        indices = indices[self._num_added_start_tokens : -self._num_added_end_tokens]
+        full_seq_len = len(indices)
+        too_long = full_seq_len > self._max_length
+        if too_long:
             # We prepare long indices by converting them to (assuming max_length == 5)
             # [CLS] A B C [SEP] [CLS] D E F [SEP] ...
             # Embedder is responsible for folding this 1-d sequence to 2-d and feed to the
             # transformer model.
             # TODO(zhaofengw): we aren't respecting word boundaries when segmenting wordpieces.
 
-            indices = output["token_ids"]
-            # Strips original special tokens
-            indices = indices[self._num_added_start_tokens : -self._num_added_end_tokens]
             # Folds indices
             folded_indices = [
                 indices[i : i + self._effective_max_length]
