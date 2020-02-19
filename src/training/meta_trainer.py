@@ -26,7 +26,7 @@ from allennlp.training.metric_tracker import MetricTracker
 from allennlp.training.momentum_schedulers import MomentumScheduler
 from allennlp.training.moving_average import MovingAverage
 from allennlp.training.optimizers import Optimizer
-from allennlp.training.tensorboard_writer import TensorboardWriter
+from src.training.wandb_writer import WandBWriter
 from allennlp.training.trainer_base import TrainerBase
 
 from src.training.wrapper import BaseWrapper
@@ -69,6 +69,7 @@ class MetaTrainer(TrainerBase):
         world_size: int = 1,
         num_gradient_accumulation_steps: int = 1,
         wrapper: Optional[BaseWrapper] = None,
+        writer: WandBWriter = None,
     ) -> None:
         """
         A trainer for doing supervised learning. It just takes a labeled dataset
@@ -260,24 +261,13 @@ class MetaTrainer(TrainerBase):
         # `_enable_activation_logging`.
         self._batch_num_total = 0
 
-        self._tensorboard = TensorboardWriter(
-            get_batch_num_total=lambda: self._batch_num_total,
-            serialization_dir=serialization_dir,
-            summary_interval=summary_interval,
-            histogram_interval=histogram_interval,
-            should_log_parameter_statistics=should_log_parameter_statistics,
-            should_log_learning_rate=should_log_learning_rate,
-        )
+        self._writer = writer
 
         self._log_batch_size_period = log_batch_size_period
 
         self._last_log = 0.0  # time of last logging
 
         self._num_gradient_accumulation_steps = num_gradient_accumulation_steps
-
-        # Enable activation logging.
-        if histogram_interval is not None:
-            self._tensorboard.enable_activation_logging(self.model)
 
         # Using `DistributedDataParallel`(ddp) brings in a quirk wrt AllenNLP's `Model` interface and its
         # usage. A `Model` object is wrapped by `ddp`, but assigning the wrapped model to `self.model`
@@ -362,8 +352,6 @@ class MetaTrainer(TrainerBase):
         if self._batch_num_total is None:
             self._batch_num_total = 0
 
-        histogram_parameters = set(self.model.get_parameters_for_histogram_tensorboard_logging())
-
         logger.info("Training")
 
         cumulative_batch_group_size = 0
@@ -376,6 +364,7 @@ class MetaTrainer(TrainerBase):
 
             loss = self.wrapper(tasks=tasks, train=True, meta_train=True)
 
+            self._writer.log({"step_loss": loss}, step=self._batch_num_total)
             train_loss += loss
 
             batch_grad_norm = self.rescale_gradients()
@@ -387,24 +376,7 @@ class MetaTrainer(TrainerBase):
             if self._momentum_scheduler:
                 self._momentum_scheduler.step_batch(batch_num_total)
 
-            if self._tensorboard.should_log_histograms_this_batch() and self._master:
-                # get the magnitude of parameter updates for logging
-                # We need a copy of current parameters to compute magnitude of updates,
-                # and copy them to CPU so large models won't go OOM on the GPU.
-                param_updates = {
-                    name: param.detach().cpu().clone()
-                    for name, param in self.model.named_parameters()
-                }
-                self.optimizer.step()
-                for name, param in self.model.named_parameters():
-                    param_updates[name].sub_(param.detach().cpu())
-                    update_norm = torch.norm(param_updates[name].view(-1))
-                    param_norm = torch.norm(param.view(-1)).cpu()
-                    self._tensorboard.add_train_scalar(
-                        "gradient_update/" + name, update_norm / (param_norm + 1e-7)
-                    )
-            else:
-                self.optimizer.step()
+            self.optimizer.step()
 
             # Update moving averages
             if self._moving_average is not None:
@@ -423,28 +395,6 @@ class MetaTrainer(TrainerBase):
             if self._master:
                 description = training_util.description_from_metrics(metrics)
                 batch_group_generators_tqdm[0].set_description(description, refresh=False)
-
-            # Log parameter values to Tensorboard (only from the master)
-            if self._tensorboard.should_log_this_batch() and self._master:
-                self._tensorboard.log_parameter_and_gradient_statistics(self.model, batch_grad_norm)
-                self._tensorboard.log_learning_rates(self.model, self.optimizer)
-
-                self._tensorboard.add_train_scalar("loss/loss_train", metrics["loss"])
-                self._tensorboard.log_metrics({"epoch_metrics/" + k: v for k, v in metrics.items()})
-
-            if self._tensorboard.should_log_histograms_this_batch() and self._master:
-                self._tensorboard.log_histograms(self.model, histogram_parameters)
-
-            #if self._log_batch_size_period:
-            #    batch_group_size = sum(training_util.get_batch_size(batch) for batch in batch_group)
-            #    cumulative_batch_group_size += batch_group_size
-            #    if (batches_this_epoch - 1) % self._log_batch_size_period == 0:
-            #        average = cumulative_batch_group_size / batches_this_epoch
-            #        logger.info(
-            #            f"current batch size: {batch_group_size} mean batch size: {average}"
-            #        )
-            #        self._tensorboard.add_train_scalar("current_batch_size", batch_group_size)
-            #        self._tensorboard.add_train_scalar("mean_batch_size", average)
 
             # Save model if needed.
             if (
@@ -492,17 +442,6 @@ class MetaTrainer(TrainerBase):
         else:
             val_iterator = self.iterator
 
-        #val_generators = {key: val_iterator(val_data, num_epochs=1, shuffle=False)
-        #    for key, val_data in self._validation_datas.items()}
-        #val_group_generators = {key: lazy_groups_of(val_generator, 1)
-        #    for key, val_generator in val_generators.items()}
-        #num_validation_batches = {key: val_iterator.get_num_batches(val_data)
-        #    for key, val_data in self._validation_datas.items()}
-        #val_group_generators_tqdm = [Tqdm.tqdm(val_group_generator, total=num_validation_batches[key])
-        #    for key, val_group_generator in val_group_generators.items()]
-        #val_loss = 0
-        #for tasks in zip(*val_group_generators_tqdm):
-        #    loss = self.wrapper(tasks=tasks, train=False, meta_train=False)
         batches_this_epoch = 0
         val_loss = 0
         val_generators = {key: val_iterator(val_data, num_epochs=1, shuffle=False)
@@ -611,9 +550,8 @@ class MetaTrainer(TrainerBase):
                         break
 
             if self._master:
-                self._tensorboard.log_metrics(
-                    train_metrics, val_metrics=val_metrics, log_to_console=True, epoch=epoch + 1
-                )  # +1 because tensorboard doesn't like 0
+                self._writer.log(train_metrics, step=self._batch_num_total, prefix="train_")
+                self._writer.log(val_metrics, step=self._batch_num_total, prefix="val_")
 
             # Create overall metrics dict
             training_elapsed_time = time.time() - training_start_time
@@ -667,9 +605,6 @@ class MetaTrainer(TrainerBase):
                 logger.info("Estimated training time remaining: %s", formatted_time)
 
             epochs_trained += 1
-
-        # make sure pending events are flushed to disk and files are closed properly
-        self._tensorboard.close()
 
         # Load the best model state before returning
         best_model_state = self._checkpointer.best_model_state()
@@ -790,6 +725,7 @@ class MetaTrainer(TrainerBase):
         from allennlp.training.trainer import Trainer
         from src.training.trainer_pieces import MetaTrainerPieces
 
+        config = params.as_dict()
         pieces = MetaTrainerPieces.from_params(params, serialization_dir, recover)
         model = pieces.model
         serialization_dir = serialization_dir
@@ -854,6 +790,11 @@ class MetaTrainer(TrainerBase):
                 num_serialized_models_to_keep=num_serialized_models_to_keep,
                 keep_serialized_model_every_num_seconds=keep_serialized_model_every_num_seconds,
             )
+
+        wandb_config = params.pop("wandb", None)
+        if wandb_config is not None:
+            writer = WandBWriter(config, model, wandb_config)
+
         model_save_interval = params.pop_float("model_save_interval", None)
         summary_interval = params.pop_int("summary_interval", 100)
         histogram_interval = params.pop_int("histogram_interval", None)
@@ -902,4 +843,5 @@ class MetaTrainer(TrainerBase):
             world_size=world_size,
             num_gradient_accumulation_steps=num_gradient_accumulation_steps,
             wrapper=wrapper,
+            writer=writer,
         )
