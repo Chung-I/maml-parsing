@@ -116,6 +116,11 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*" + split +".conllu";
             "optimizer_kwargs": {
                 "lr": 3e-4
             }
-        }
+        },
+        "wandb": {
+            "name": "test-1",
+            "project": "allennlp-maml-parsing",
+            "tags": LANGS,
+        },
     }
 }
