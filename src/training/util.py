@@ -83,7 +83,7 @@ def read_all_datasets(
     return datasets
 
 
-def datasets_from_params(params: Params) -> Dict[str, Iterable[Instance]]:
+def datasets_from_params(params: Params) -> Dict[str, Dict[str, Iterable[Instance]]]:
     """
     Load all the datasets specified by the config.
 

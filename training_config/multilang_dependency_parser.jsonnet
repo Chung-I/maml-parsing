@@ -4,44 +4,58 @@
 //
 // To recompute alignemts for ELMo, refer to: https://github.com/TalSchuster/CrossLingualELMo
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
-local BASE_READER(x) = {
+local MAX_LEN = 512;
+local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
     "languages": [x],
-    "alternate": false,
+    "alternate": alternate,
     "instances_per_file": 32,
-    "is_first_pass_for_vocab": true,
+    "is_first_pass_for_vocab": false,
     "lazy": true,
     "token_indexers": {
         "roberta": {
             "type": "transformer_pretrained_mismatched",
-            "model_name": "xlm-roberta-base"
+            "model_name": "xlm-roberta-base",
+            "max_length": MAX_LEN,
         }
     },
     "use_language_specific_pos": false
 };
 
-local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_";
+local LANGS = ["et", "fi", "de", "en", "hi", "ja", "fr", "it",
+   "la", "bg", "sl", "eu", "zh"];
+
+local READERS(xs, alternate=true) = {
+    [x]: BASE_READER(x, alternate) for x in xs
+};
+
+local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_*/";
+local DATA_PATH(lang, split) = UD_ROOT + lang + "*" + split + ".conllu";
+
+local READERS(xs, alternate=true) = {
+    [x]: BASE_READER(x, alternate) for x in xs
+};
+
+local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_*/";
+local DATA_PATH(lang, split) = UD_ROOT + lang + "*" + split +".conllu";
 
 {
-    "dataset_readers": {
-        "en": BASE_READER("en"),
-        "zh": BASE_READER("zh"),
-        "fr": BASE_READER("fr")
-    },
-    "validation_dataset_readers": {
-        "en": BASE_READER("en"),
-        "zh": BASE_READER("zh"),
-        "fr": BASE_READER("fr")
-    },
+    "dataset_readers": READERS(LANGS),
+    "validation_dataset_readers": READERS(LANGS, false),
     "vocabulary": {
         "type": "from_files",
         "directory": "data/vocabulary"
     },
     "iterator": {
-        "type": "same_language",
+        "type": "bucket",
         "batch_size": 8,
-        "sorting_keys": [["words", "num_tokens"]],
-        "instances_per_epoch": 32000
+        "sorting_keys": [["words", "roberta___mask"]],
+        "instances_per_epoch": 200
+    },
+    "validation_iterator": {
+        "type": "bucket",
+        "sorting_keys": [["words", "roberta___mask"]],
+        "batch_size": 32
     },
     "model": {
         "type": "biaffine_parser_multilang",
@@ -55,14 +69,7 @@ local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_";
             "input_size": 818,
             "num_layers": 2
         },
-        "langs_for_early_stop": [
-            "en",
-            "de",
-            "it",
-            "fr",
-            "pt",
-            "sv"
-        ],
+        "langs_for_early_stop": LANGS,
         "pos_tag_embedding": {
             "embedding_dim": 50,
             "vocab_namespace": "pos"
@@ -74,6 +81,7 @@ local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_";
                     "type": "transformer_pretrained_mismatched",
                     "model_name": "xlm-roberta-base",
                     "requires_grad": false,
+                    "max_length": MAX_LEN,
                 }
             }
         }
@@ -81,26 +89,24 @@ local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_";
     // UDTB v2.0 is available at https://github.com/ryanmcd/uni-dep-tb
     // Set TRAIN_PATHNAME='std/**/*train.conll'
     "train_data_paths": {
-            "en": UD_ROOT + "English-*/*-train.conllu",
-            "zh": UD_ROOT + "Chinese-*/*-train.conllu",
-            "fr": UD_ROOT + "French-*/*-train.conllu"
+        [lang]: DATA_PATH(lang, "train") for lang in LANGS
     },
     "validation_data_paths": {
-            "en": UD_ROOT + "English-*/*-dev.conllu",
-            "zh": UD_ROOT + "Chinese-*/*-dev.conllu",
-            "fr": UD_ROOT + "French-*/*-dev.conllu"
+        [lang]: DATA_PATH(lang, "dev") for lang in LANGS
     },
     "test_data_paths": {
-            "en": UD_ROOT + "English-*/*-test.conllu",
-            "zh": UD_ROOT + "Chinese-*/*-test.conllu",
-            "fr": UD_ROOT + "French-*/*-test.conllu"
+        [lang]: DATA_PATH(lang, "test") for lang in LANGS
     },
     "trainer": {
         "type": "meta",
         "cuda_device": 0,
         "num_epochs": 40,
-        "optimizer": "adam",
+        "optimizer": {
+          "type": "adam",
+          "lr": 3e-4,
+        },
         "patience": 10,
+        "grad_norm": 5.0,
         "validation_metric": "+LAS_AVG",
         "num_gradient_accumulation_steps": 2,
         "wrapper": {
@@ -108,7 +114,7 @@ local UD_ROOT = "/home/nlpmaster/ssd-1t/corpus/ud/ud-treebanks-v2.5/UD_";
             "grad_norm": 5.0,
             "optimizer_cls": "Adam",
             "optimizer_kwargs": {
-                "lr": 1e-4
+                "lr": 3e-4
             }
         }
     }

@@ -104,7 +104,7 @@ class BaseWrapper(Registrable):
         self._grad_clipping = grad_clipping
         self._grad_norm = grad_norm
         self._container = deepcopy(self.model)
-        self.model.get_metrics = self._container.get_metrics
+        #self.model.get_metrics = self._container.get_metrics
         training_util.enable_gradient_clipping(self.model, self._grad_clipping)
         self.optimizer_cls = getattr(torch.optim, optimizer_cls)
         self.optimizer_kwargs = optimizer_kwargs
@@ -138,16 +138,18 @@ class BaseWrapper(Registrable):
             tasks (list, torch.utils.data.DataLoader): list of task-specific dataloaders.
             meta_train (bool): whether current run in during meta-training.
         """
-        train_loss = 0.0
+        total_loss = 0.0
         for task in tasks:
-            loss = self.run_task(task, train=train, meta_train=meta_train)
-            train_loss += loss
+            task_loss = self.run_task(task, train=train, meta_train=meta_train)
+            total_loss += task_loss
+
+        avg_loss = total_loss / len(tasks)
 
         # Meta gradient step
         if meta_train:
             self._final_meta_update()
 
-        return loss
+        return avg_loss
 
     def run_task(self, task, train, meta_train):
         """Run model on a given task.
@@ -191,6 +193,9 @@ class BaseWrapper(Registrable):
             #loss = self.model(inputs)
             output_dict = self._container(**inputs)
             loss = output_dict["loss"]
+            if torch.isnan(loss):
+                raise ValueError("nan loss encountered")
+            loss = loss / len(batches)
             train_loss += loss.item()
             # TRAINING #
             if not train:
@@ -199,10 +204,10 @@ class BaseWrapper(Registrable):
             final = (n+1) == N
             loss.backward()
 
+            grad_norm = self.rescale_gradients()
+
             if meta_train:
                 self._partial_meta_update(loss, final)
-
-            grad_norm = self.rescale_gradients()
 
             optimizer.step()
             optimizer.zero_grad()
@@ -335,8 +340,8 @@ class _FOWrapper(BaseWrapper):
             else:
                 p.grad = self._updates[n]
 
-        self.meta_optimizer.step()
-        self.meta_optimizer.zero_grad()
+        #self.meta_optimizer.step()
+        #self.meta_optimizer.zero_grad()
         self._counter = 0
         self._updates = None
 

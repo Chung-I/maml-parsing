@@ -1,6 +1,6 @@
-import datetime
 import logging
 import math
+import datetime
 import os
 import time
 import traceback
@@ -68,7 +68,7 @@ class MetaTrainer(TrainerBase):
         local_rank: int = 0,
         world_size: int = 1,
         num_gradient_accumulation_steps: int = 1,
-        wrapper: BaseWrapper = None,
+        wrapper: Optional[BaseWrapper] = None,
     ) -> None:
         """
         A trainer for doing supervised learning. It just takes a labeled dataset
@@ -304,6 +304,8 @@ class MetaTrainer(TrainerBase):
         If `for_training` is `True` also applies regularization penalty.
         """
         batch = nn_util.move_to_device(batch, self.cuda_device)
+        import pdb
+        pdb.set_trace()
         output_dict = self._pytorch_model(**batch)
 
         try:
@@ -368,10 +370,13 @@ class MetaTrainer(TrainerBase):
 
         cumulative_batch_group_size = 0
         for tasks in zip(*batch_group_generators_tqdm):
-            loss = self.wrapper(tasks=tasks, train=True)
             batches_this_epoch += 1
             self._batch_num_total += 1
             batch_num_total = self._batch_num_total
+
+            self.optimizer.zero_grad()
+
+            loss = self.wrapper(tasks=tasks, train=True, meta_train=True)
 
             train_loss += loss
 
@@ -409,7 +414,7 @@ class MetaTrainer(TrainerBase):
 
             # Update the description with the latest metrics
             metrics = training_util.get_metrics(
-                self.model,
+                self.wrapper._container,
                 train_loss,
                 batches_this_epoch,
                 world_size=self._world_size,
@@ -432,16 +437,16 @@ class MetaTrainer(TrainerBase):
             if self._tensorboard.should_log_histograms_this_batch() and self._master:
                 self._tensorboard.log_histograms(self.model, histogram_parameters)
 
-            if self._log_batch_size_period:
-                batch_group_size = sum(training_util.get_batch_size(batch) for batch in batch_group)
-                cumulative_batch_group_size += batch_group_size
-                if (batches_this_epoch - 1) % self._log_batch_size_period == 0:
-                    average = cumulative_batch_group_size / batches_this_epoch
-                    logger.info(
-                        f"current batch size: {batch_group_size} mean batch size: {average}"
-                    )
-                    self._tensorboard.add_train_scalar("current_batch_size", batch_group_size)
-                    self._tensorboard.add_train_scalar("mean_batch_size", average)
+            #if self._log_batch_size_period:
+            #    batch_group_size = sum(training_util.get_batch_size(batch) for batch in batch_group)
+            #    cumulative_batch_group_size += batch_group_size
+            #    if (batches_this_epoch - 1) % self._log_batch_size_period == 0:
+            #        average = cumulative_batch_group_size / batches_this_epoch
+            #        logger.info(
+            #            f"current batch size: {batch_group_size} mean batch size: {average}"
+            #        )
+            #        self._tensorboard.add_train_scalar("current_batch_size", batch_group_size)
+            #        self._tensorboard.add_train_scalar("mean_batch_size", average)
 
             # Save model if needed.
             if (
@@ -460,7 +465,7 @@ class MetaTrainer(TrainerBase):
             dist.barrier()
 
         metrics = training_util.get_metrics(
-            self.model,
+            self.wrapper._container,
             train_loss,
             batches_this_epoch,
             reset=True,
@@ -489,33 +494,48 @@ class MetaTrainer(TrainerBase):
         else:
             val_iterator = self.iterator
 
-        val_generator = val_iterator(self._validation_data, num_epochs=1, shuffle=False)
-        num_validation_batches = val_iterator.get_num_batches(self._validation_data)
-        val_generator_tqdm = Tqdm.tqdm(val_generator, total=num_validation_batches)
+        #val_generators = {key: val_iterator(val_data, num_epochs=1, shuffle=False)
+        #    for key, val_data in self._validation_datas.items()}
+        #val_group_generators = {key: lazy_groups_of(val_generator, 1)
+        #    for key, val_generator in val_generators.items()}
+        #num_validation_batches = {key: val_iterator.get_num_batches(val_data)
+        #    for key, val_data in self._validation_datas.items()}
+        #val_group_generators_tqdm = [Tqdm.tqdm(val_group_generator, total=num_validation_batches[key])
+        #    for key, val_group_generator in val_group_generators.items()]
+        #val_loss = 0
+        #for tasks in zip(*val_group_generators_tqdm):
+        #    loss = self.wrapper(tasks=tasks, train=False, meta_train=False)
         batches_this_epoch = 0
         val_loss = 0
-        for batch in val_generator_tqdm:
-
-            loss = self.batch_loss(batch, for_training=False)
-            if loss is not None:
-                # You shouldn't necessarily have to compute a loss for validation, so we allow for
-                # `loss` to be None.  We need to be careful, though - `batches_this_epoch` is
-                # currently only used as the divisor for the loss function, so we can safely only
-                # count those batches for which we actually have a loss.  If this variable ever
-                # gets used for something else, we might need to change things around a bit.
-                batches_this_epoch += 1
-                val_loss += loss.detach().cpu().numpy()
+        val_generators = {key: val_iterator(val_data, num_epochs=1, shuffle=False)
+            for key, val_data in self._validation_datas.items()}
+        num_validation_batches = {key: val_iterator.get_num_batches(val_data)
+            for key, val_data in self._validation_datas.items()}
+        val_generators_tqdm = [Tqdm.tqdm(val_generator, total=num_validation_batches[key])
+            for key, val_generator in val_generators.items()]
+        for val_generator_tqdm in val_generators_tqdm:
+            for batch in val_generator_tqdm:
+                loss = self.batch_loss(batch, for_training=False)
+                if loss is not None:
+                    # You shouldn't necessarily have to compute a loss for validation, so we allow for
+                    # `loss` to be None.  We need to be careful, though - `batches_this_epoch` is
+                    # currently only used as the divisor for the loss function, so we can safely only
+                    # count those batches for which we actually have a loss.  If this variable ever
+                    # gets used for something else, we might need to change things around a bit.
+                    batches_this_epoch += 1
+                    val_loss += loss.detach().cpu().numpy()
 
             # Update the description with the latest metrics
-            val_metrics = training_util.get_metrics(
-                self.model,
-                val_loss,
-                batches_this_epoch,
-                world_size=self._world_size,
-                cuda_device=[self.cuda_device],
-            )
-            description = training_util.description_from_metrics(val_metrics)
-            val_generator_tqdm.set_description(description, refresh=False)
+                val_metrics = training_util.get_metrics(
+                    self.model,
+                    val_loss,
+                    batches_this_epoch,
+                    world_size=self._world_size,
+                    cuda_device=[self.cuda_device],
+                )
+                description = training_util.description_from_metrics(val_metrics)
+                for val_generator_tqdm in val_generators_tqdm:
+                    val_generator_tqdm.set_description(description, refresh=False)
 
         # Now restore the original parameter values.
         if self._moving_average is not None:
@@ -565,7 +585,7 @@ class MetaTrainer(TrainerBase):
                 if key.startswith("gpu_"):
                     metrics["peak_" + key] = max(metrics.get("peak_" + key, 0), value)
 
-            if self._validation_data is not None:
+            if self._validation_datas is not None:
                 with torch.no_grad():
                     # We have a validation set, so compute all the metrics on it.
                     val_loss, num_batches = self._validation_loss()
