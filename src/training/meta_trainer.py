@@ -30,6 +30,7 @@ from src.training.wandb_writer import WandBWriter
 from allennlp.training.trainer_base import TrainerBase
 
 from src.training.wrapper import BaseWrapper
+from src.training.util import as_flat_dict
 
 logger = logging.getLogger(__name__)
 
@@ -725,7 +726,7 @@ class MetaTrainer(TrainerBase):
         from allennlp.training.trainer import Trainer
         from src.training.trainer_pieces import MetaTrainerPieces
 
-        config = params.as_dict()
+        config = dict(as_flat_dict(params.as_dict()))
         pieces = MetaTrainerPieces.from_params(params, serialization_dir, recover)
         model = pieces.model
         serialization_dir = serialization_dir
@@ -791,10 +792,6 @@ class MetaTrainer(TrainerBase):
                 keep_serialized_model_every_num_seconds=keep_serialized_model_every_num_seconds,
             )
 
-        wandb_config = params.pop("wandb", None)
-        if wandb_config is not None:
-            writer = WandBWriter(config, model, wandb_config)
-
         model_save_interval = params.pop_float("model_save_interval", None)
         summary_interval = params.pop_int("summary_interval", 100)
         histogram_interval = params.pop_int("histogram_interval", None)
@@ -811,6 +808,10 @@ class MetaTrainer(TrainerBase):
             optimizer,
             params.pop("wrapper"),
             cuda_device)
+
+        wandb_config = params.pop("wandb", None)
+        if wandb_config is not None:
+            writer = WandBWriter(config, wrapper._container, wandb_config)
 
         params.assert_empty(cls.__name__)
         return cls(

@@ -5,6 +5,7 @@
 // To recompute alignemts for ELMo, refer to: https://github.com/TalSchuster/CrossLingualELMo
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
+local MODEL_NAME = "xlm-roberta-base";
 local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
     "languages": [x],
@@ -15,7 +16,7 @@ local BASE_READER(x, alternate=true) = {
     "token_indexers": {
         "roberta": {
             "type": "transformer_pretrained_mismatched",
-            "model_name": "xlm-roberta-base",
+            "model_name": MODEL_NAME,
             "max_length": MAX_LEN,
         }
     },
@@ -48,14 +49,14 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*" + split +".conllu";
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 8,
+        "batch_size": 32,
         "sorting_keys": [["words", "roberta___mask"]],
-        "instances_per_epoch": 200
+        "instances_per_epoch": 32000,
     },
     "validation_iterator": {
         "type": "bucket",
         "sorting_keys": [["words", "roberta___mask"]],
-        "batch_size": 32
+        "batch_size": 32,
     },
     "model": {
         "type": "biaffine_parser_multilang",
@@ -79,7 +80,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*" + split +".conllu";
             "token_embedders": {
                 "roberta": {
                     "type": "transformer_pretrained_mismatched",
-                    "model_name": "xlm-roberta-base",
+                    "model_name": MODEL_NAME,
                     "requires_grad": false,
                     "max_length": MAX_LEN,
                 }
@@ -108,6 +109,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*" + split +".conllu";
         "patience": 10,
         "grad_norm": 5.0,
         "validation_metric": "+LAS_AVG",
+        "num_serialized_models_to_keep": 2,
         "num_gradient_accumulation_steps": 2,
         "wrapper": {
             "type": "reptile",

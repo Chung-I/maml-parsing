@@ -125,6 +125,10 @@ class PretrainedTransformerMismatchedIndexer(TokenIndexer):
         cumulative = self._num_added_start_tokens
         for token in tokens:
             subword_wordpieces = self._tokenizer.encode(token.text, add_special_tokens=False)
+            # when we encounter oov tokens where our tokenizer simply return empty list,
+            # we replace the token by underscore
+            if not subword_wordpieces:
+                subword_wordpieces = self._tokenizer.encode("_", add_special_tokens=False)
             wordpieces.extend(subword_wordpieces)
 
             start_offset = cumulative

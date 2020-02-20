@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 class HasBeenWarned:
     tqdm_ignores_underscores = False
 
+flatten  = lambda l: [item for sublist in l for item in sublist]
 
 def clone(tensor):
     """Detach and clone a tensor including the ``requires_grad`` attribute.
@@ -165,3 +166,43 @@ def as_flat_dict(params):
 
     recurse(params, [])
     return flat_params
+
+
+def get_tensors(obj):
+    """
+    Given a structure (possibly) containing Tensors on the CPU,
+    move all the Tensors to the specified GPU (or do nothing, if they should be on the CPU).
+    """
+
+    tensors = []
+    if not nn_util.has_tensor(obj):
+        pass
+    elif isinstance(obj, torch.Tensor):
+        tensors += [obj]
+    elif isinstance(obj, dict):
+        tensors += flatten([get_tensors(value) for key, value in obj.items()])
+    elif isinstance(obj, list):
+        tensors += flatten([get_tensors(item) for item in obj])
+    elif isinstance(obj, tuple) and hasattr(obj, "_fields"):
+        # This is the best way to detect a NamedTuple, it turns out.
+        tensors += flatten([get_tensors(item) for item in obj])
+    elif isinstance(obj, tuple):
+        tensors += flatten([get_tensors(item) for item in obj])
+    return tensors
+
+
+def nan_hook(self, inp, output):
+    from torch.nn.utils.rnn import PackedSequence
+    outputs = get_tensors(output)
+
+    for i, out in enumerate(outputs):
+        if isinstance(out, PackedSequence):
+            out = out.data
+        nan_mask = torch.isnan(out)
+        if nan_mask.any():
+            print("In", self.__class__.__name__)
+            raise RuntimeError(f"Found NAN in output {i} at indices: ",
+                               nan_mask.nonzero(),
+                               "where:",
+                               out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
+
