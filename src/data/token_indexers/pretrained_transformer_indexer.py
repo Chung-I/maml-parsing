@@ -190,7 +190,8 @@ class PretrainedTransformerIndexer(TokenIndexer):
             output["type_ids"] = self._tokenizer.create_token_type_ids_from_sequences(
                 indices[self._num_added_start_tokens : -self._num_added_end_tokens]
             )
-            output["segment_concat_mask"] = [1] * len(indices)
+
+        output["segment_concat_mask"] = [1] * len(indices)
 
         return output
 
