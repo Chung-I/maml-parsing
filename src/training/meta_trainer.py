@@ -30,7 +30,7 @@ from src.training.wandb_writer import WandBWriter
 from allennlp.training.trainer_base import TrainerBase
 
 from src.training.wrapper import BaseWrapper
-from src.training.util import as_flat_dict
+from src.training.util import as_flat_dict, filter_state_dict
 
 logger = logging.getLogger(__name__)
 
@@ -644,7 +644,8 @@ class MetaTrainer(TrainerBase):
             training_states["momentum_scheduler"] = self._momentum_scheduler.state_dict()
 
         self._checkpointer.save_checkpoint(
-            model_state=self.model.state_dict(),
+            model_state=filter_state_dict(self.model.state_dict(),
+                                          lambda k, v: 'text_field_embedder' not in k),
             epoch=epoch,
             training_states=training_states,
             is_best_so_far=self._metric_tracker.is_best_so_far(),
@@ -678,7 +679,7 @@ class MetaTrainer(TrainerBase):
             # No checkpoint to restore, start at 0
             return 0
 
-        self.model.load_state_dict(model_state)
+        missing_keys, _ = self.model.load_state_dict(model_state, strict=False)
         self.optimizer.load_state_dict(training_state["optimizer"])
         if (
             self._learning_rate_scheduler is not None

@@ -206,3 +206,5 @@ def nan_hook(self, inp, output):
                                "where:",
                                out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
 
+def filter_state_dict(state_dict, filter_func):
+    return OrderedDict({k: v for k, v in state_dict.items() if filter_func(k, v)})
