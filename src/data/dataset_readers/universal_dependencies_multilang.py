@@ -1,4 +1,5 @@
-from typing import Dict, Tuple, List, Iterator, Any
+from typing import Dict, Tuple, List, Iterator, Any, Callable
+from collections import OrderedDict
 import logging
 import itertools
 import glob
@@ -85,6 +86,8 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         languages: List[str],
         token_indexers: Dict[str, TokenIndexer] = None,
         use_language_specific_pos: bool = False,
+        use_lemma: bool = False,
+        use_ufeat: bool = False,
         alternate: bool = True,
         is_first_pass_for_vocab: bool = True,
         instances_per_file: int = 32,
@@ -94,6 +97,8 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         self._languages = languages
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer()}
         self._use_language_specific_pos = use_language_specific_pos
+        self._use_lemma = use_lemma
+        self._use_ufeat = use_ufeat
 
         self._is_first_pass_for_vocab = is_first_pass_for_vocab
         self._alternate = alternate
@@ -114,7 +119,15 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
                 # dependencies for the original sentence.
                 # We filter by integers here as elided words have a non-integer word id,
                 # as parsed by the conllu python library.
+
                 annotation = [x for x in annotation if isinstance(x["id"], int)]
+
+                if len(annotation) == 0:
+                    continue
+
+                def get_field(tag: str, map_fn: Callable[[Any], Any] = None) -> List[Any]:
+                    map_fn = map_fn if map_fn is not None else lambda x: x
+                    return [map_fn(x[tag]) if x[tag] is not None else "_" for x in annotation if tag in x]
 
                 heads = [x["head"] for x in annotation]
                 tags = [x["deprel"] for x in annotation]
@@ -123,7 +136,11 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
                     pos_tags = [x["xpostag"] for x in annotation]
                 else:
                     pos_tags = [x["upostag"] for x in annotation]
-                yield self.text_to_instance(lang, words, pos_tags, list(zip(tags, heads)))
+                lemmas = [x["lemma"] for x in annotation]
+                feats = get_field("feats", lambda x: "|".join(k + "=" + v for k, v in x.items())
+                                                     if hasattr(x, "items") else "_")
+                yield self.text_to_instance(lang, words, pos_tags, list(zip(tags, heads)),
+                                            lemmas, feats)
 
     @overrides
     def _read(self, file_path: str):
@@ -162,6 +179,8 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         words: List[str],
         upos_tags: List[str],
         dependencies: List[Tuple[str, int]] = None,
+        lemmas: List[str] = None,
+        feats: List[str] = None,
     ) -> Instance:
 
         """
@@ -197,6 +216,9 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
             fields["head_indices"] = SequenceLabelField(
                 [int(x[1]) for x in dependencies], tokens, label_namespace="head_index_tags"
             )
-
+        if self._use_lemma and lemmas is not None:
+            fields["lemmas"] = TextField([Token(lemma) for lemma in lemmas], self._token_indexers)
+        if self._use_ufeat and feats is not None:
+            fields["feats"] = SequenceLabelField(feats, tokens, label_namespace="feats")
         fields["metadata"] = MetadataField({"words": words, "pos": upos_tags, "lang": lang})
         return Instance(fields)

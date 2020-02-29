@@ -32,11 +32,20 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
         model_name: str,
         max_length: int = None,
         requires_grad: bool = True,
+        layer_dropout: float = 0.0,
+        dropout: float = 0.0,
+        combine_layers: str = "mix",
         ) -> None:
         super().__init__()
         # The matched version v.s. mismatched
         self._matched_embedder = PretrainedTransformerEmbedder(
-            model_name, max_length, requires_grad)
+            model_name,
+            max_length=max_length,
+            requires_grad=requires_grad,
+            layer_dropout=layer_dropout,
+            dropout=dropout,
+            combine_layers=combine_layers,
+        )
 
     @overrides
     def get_output_dim(self):

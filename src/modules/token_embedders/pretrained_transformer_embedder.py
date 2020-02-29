@@ -2,6 +2,7 @@ import math
 from typing import Optional, Tuple, Dict
 
 from overrides import overrides
+from transformers.configuration_auto import AutoConfig
 from transformers.modeling_auto import AutoModel
 from transformers.tokenization_auto import AutoTokenizer
 import torch
@@ -12,6 +13,7 @@ from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
 from allennlp.nn.util import batched_index_select
 
 from src.data.token_indexers import PretrainedAutoTokenizer
+from src.modules.scalar_mix import ScalarMixWithDropout
 
 
 class PretrainedAutoModel:
@@ -28,7 +30,9 @@ class PretrainedAutoModel:
         if model_name in cls._cache:
             return PretrainedAutoModel._cache[model_name]
 
-        model = AutoModel.from_pretrained(model_name)
+        config = AutoConfig.from_pretrained(model_name,
+                                            output_hidden_states=True)
+        model = AutoModel.from_pretrained(model_name, config=config)
         if cache_model:
             cls._cache[model_name] = model
 
@@ -52,13 +56,32 @@ class TransformerEmbedder(TokenEmbedder):
         `PretrainedTransformerIndexer`.
     """
 
-    def __init__(self, model_name: str, max_length: int = None) -> None:
+    def __init__(self,
+                 model_name: str,
+                 max_length: int = None,
+                 layer_dropout: float = 0.0,
+                 dropout: float = 0.0,
+                 combine_layers: str = "mix") -> None:
         super().__init__()
+        import pdb
+        pdb.set_trace()
         self.transformer_model = PretrainedAutoModel.load(model_name)
         self._max_length = max_length
         # I'm not sure if this works for all models; open an issue on github if you find a case
         # where it doesn't work.
         self.output_dim = self.transformer_model.config.hidden_size
+        self.combine_layers = combine_layers
+
+        if self.combine_layers == "mix":
+            self._scalar_mix = ScalarMixWithDropout(
+                self.transformer_model.config.num_hidden_layers,
+                do_layer_norm=False,
+                dropout=layer_dropout
+            )
+        else:
+            self._scalar_mix = None
+
+        self.set_dropout(dropout)
 
         tokenizer = PretrainedAutoTokenizer.load(model_name)
         (
@@ -124,9 +147,17 @@ class TransformerEmbedder(TokenEmbedder):
         # Shape: [batch_size, num_wordpieces, embedding_size],
         # or if self._max_length is not None:
         # [batch_size * num_segments, self._max_length, embedding_size]
-        embeddings = self.transformer_model(
+        import pdb
+        pdb.set_trace()
+        layers = self.transformer_model(
             input_ids=token_ids, token_type_ids=type_ids, attention_mask=transformer_mask
-        )[0]
+        )[-1][1:]
+        if self._scalar_mix is not None:
+            embeddings = self._scalar_mix(layers, transformer_mask)
+        elif self.combine_layers == "last":
+            embeddings = layers[-1]
+        else:
+            raise NotImplementedError
 
         if too_long:
             embeddings = self._unfold_long_sequences(
@@ -134,6 +165,19 @@ class TransformerEmbedder(TokenEmbedder):
             )
 
         return embeddings
+
+    def set_dropout(self, dropout):
+        """
+        Applies dropout to all transformer layers
+        """
+        self.dropout = dropout
+
+        self.transformer_model.embeddings.dropout.p = dropout
+
+        for layer in self.transformer_model.encoder.layer:
+            layer.attention.self.dropout.p = dropout
+            layer.attention.output.dropout.p = dropout
+            layer.output.dropout.p = dropout
 
     def _fold_long_sequences(
         self,
@@ -310,12 +354,18 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
         self,
         model_name: str,
         max_length: int = None,
-        requires_grad: bool = True
+        requires_grad: bool = True,
+        layer_dropout: float = 0.0,
+        dropout: float = 0.0,
+        combine_layers: str = "mix",
     ) -> None:
 
         super().__init__(
             model_name=model_name,
             max_length=max_length,
+            layer_dropout=layer_dropout,
+            dropout=dropout,
+            combine_layers=combine_layers,
         )
         for param in self.transformer_model.parameters():
             param.requires_grad = requires_grad
