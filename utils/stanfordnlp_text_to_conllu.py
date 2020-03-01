@@ -61,7 +61,7 @@ def prep_conllu(tb, file_path, overwrite):
         return None
     lang, tb, tb_kwargs = determine_treebank(tb)
     if not lang:
-        # shutil.copy(txt_file.parent.joinpath(f"{tb}-udpipe.conllu"), out_file)
+        shutil.copy(file_path, out_file)
         return None
     doc = stanfordnlp.Document('')
     doc.conll_file = CoNLLFile(file_path)
