@@ -64,13 +64,14 @@ local DATA_PATH(lang, split) = UD_ROOT + "*/" + lang + "-ud-" + split + ".conllu
         "arc_representation_dim": 500,
         "dropout": 0.33,
         "word_dropout": 0.33,
+        "input_dropout": 0.33,
         "encoder": {
-            "type": "lstm",
-            "bidirectional": true,
-            "dropout": 0.33,
-            "hidden_size": 200,
-            "input_size": 818,
-            "num_layers": 2
+            "type": "pass_through",
+            // "bidirectional": true,
+            // "dropout": 0.33,
+            // "hidden_size": 200,
+            // "input_size": 818,
+            // "num_layers": 2
         },
         "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
@@ -110,7 +111,7 @@ local DATA_PATH(lang, split) = UD_ROOT + "*/" + lang + "-ud-" + split + ".conllu
         "num_epochs": 40,
         "optimizer": {
           "type": "adam",
-          "lr": 3e-4,
+          "lr": 5e-5,
         },
         "patience": 10,
         "grad_norm": 5.0,
