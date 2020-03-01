@@ -27,24 +27,53 @@ from allennlp.training.tensorboard_writer import TensorboardWriter
 
 from src.training.util import clone_state_dict
 
+class Wrapper(Registrable):
+    def __init__(self):
+        pass
 
-class MultiWrapper(object):
+    @classmethod
+    def from_params(  # type: ignore
+        cls,
+        model: Model,
+        optimizer: Optimizer,
+        params: Params,
+        cuda_device: int = -1,
+    ) -> "Wrapper":
+        typ3 = params.pop("type", "default")
+        klass: Type[Wrapper] = Wrapper.by_name(typ3)  # type: ignore
+        # Explicit check to prevent recursion.
+        is_overriden = (
+            klass.from_params.__func__ != Wrapper.from_params.__func__  # type: ignore
+        )
+        assert is_overriden, f"Class {klass.__name__} must override `from_params`."
+        return klass.from_params(model, optimizer, params, cuda_device)
+
+
+@Wrapper.register("multi")
+class MultiWrapper(Wrapper):
     def __init__(self,
                  model: Model,
                  optimizer: torch.optim.Optimizer,
                  cuda_device: int):
+        super(Wrapper, self).__init__()
         self.model = model
         self.optimizer = optimizer
         self.cuda_device = cuda_device
 
+    @property
+    def container(self):
+        return self.model
+
     def __call__(self, tasks, train=True, meta_train=False):
         # argument key meta_train is dummy
-        train_loss = 0.0
+        total_loss = 0.0
         for task in tasks:
-            loss = self.run_task(task, train=train)
-            train_loss += loss
+            task_loss = self.run_task(task, train=train)
+            total_loss += task_loss
 
-        return train_loss
+        avg_loss = total_loss / len(tasks)
+
+        return avg_loss
 
     def run_task(self, task, train):
         if train:
@@ -61,23 +90,28 @@ class MultiWrapper(object):
 
             output_dict = self.model(**inputs)
             loss = output_dict["loss"]
-            loss.backward()
+            loss = loss / len(batches)
             train_loss += loss.item()
+            if not train:
+                continue
+            loss.backward()
 
         return train_loss
 
+    @classmethod
+    def from_params(
+        cls,
+        model: Model,
+        meta_optimizer: torch.optim.Optimizer,
+        params: Params,
+        cuda_device: int = -1,
+    ) -> "Wrapper":
+        params.assert_empty(cls.__name__)
+        return  cls(model, meta_optimizer, cuda_device)
 
-    def state_dict(self):
-        return {"model": self.model.state_dict(),
-                "optimizer": self.optimizer.state_dict()}
 
-    def load_state_dict(self, state_dict, load_opt=False):
-        self.model.load_state_dict(state_dict["model"])
-        if load_opt:
-            self.optimizer.load_state_dict(state_dict["optimizer"])
-
-
-class BaseWrapper(Registrable):
+@Wrapper.register("default")
+class BaseWrapper(Wrapper):
 
     """Generic training wrapper.
 
@@ -87,7 +121,6 @@ class BaseWrapper(Registrable):
         optimizer_kwargs (dict): kwargs to pass to optimizer upon construction.
 
     """
-    default_implementation: str = "default"
 
     def __init__(
         self,
@@ -99,6 +132,7 @@ class BaseWrapper(Registrable):
         grad_norm: Optional[float] = None,
         grad_clipping: Optional[float] = None,
     ):
+        super(Wrapper, self).__init__()
         self.model = model
         self.meta_optimizer = meta_optimizer
         self._grad_clipping = grad_clipping
@@ -232,7 +266,7 @@ class BaseWrapper(Registrable):
 
         typ3 = params.pop("type", "default")
 
-        klass: Type[BaseWrapper] = BaseWrapper.by_name(typ3)  # type: ignore
+        klass: Type[Wrapper] = Wrapper.by_name(typ3)  # type: ignore
 
         grad_norm = params.pop_float("grad_norm", None)
         grad_clipping = params.pop_float("grad_clipping", None)
@@ -250,6 +284,7 @@ class BaseWrapper(Registrable):
             grad_norm=grad_norm,
             grad_clipping=grad_clipping
         )
+
 
 class NoWrapper(BaseWrapper):
 
@@ -350,7 +385,7 @@ class _FOWrapper(BaseWrapper):
         self._updates = None
 
 
-@BaseWrapper.register("reptile")
+@Wrapper.register("reptile")
 class ReptileWrapper(_FOWrapper):
 
     """Wrapper for Reptile.
@@ -368,7 +403,7 @@ class ReptileWrapper(_FOWrapper):
     def __init__(self, *args, **kwargs):
         super(ReptileWrapper, self).__init__(*args, **kwargs)
 
-@BaseWrapper.register("fomaml")
+@Wrapper.register("fomaml")
 class FOMAMLWrapper(_FOWrapper):
     """Wrapper for FOMAML.
 

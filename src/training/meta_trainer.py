@@ -29,7 +29,7 @@ from allennlp.training.optimizers import Optimizer
 from src.training.wandb_writer import WandBWriter
 from allennlp.training.trainer_base import TrainerBase
 
-from src.training.wrapper import BaseWrapper
+from src.training.wrapper import Wrapper
 from src.training.util import as_flat_dict, filter_state_dict
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ class MetaTrainer(TrainerBase):
         local_rank: int = 0,
         world_size: int = 1,
         num_gradient_accumulation_steps: int = 1,
-        wrapper: Optional[BaseWrapper] = None,
+        wrapper: Optional[Wrapper] = None,
         writer: WandBWriter = None,
     ) -> None:
         """
@@ -811,7 +811,7 @@ class MetaTrainer(TrainerBase):
         world_size = params.pop_int("world_size", 1)
 
         num_gradient_accumulation_steps = params.pop("num_gradient_accumulation_steps", 1)
-        wrapper = BaseWrapper.from_params(
+        wrapper = Wrapper.from_params(
             model,
             optimizer,
             params.pop("wrapper"),
