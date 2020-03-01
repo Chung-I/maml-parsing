@@ -85,7 +85,6 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
                     "max_length": MAX_LEN,
                     "layer_dropout": 0.1,
                     "dropout": 0.1,
-                    "combine_layers": "mix",
                 }
             }
         }
