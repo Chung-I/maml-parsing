@@ -122,7 +122,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
             }
         },
         "wandb": {
-            "name": "test-1",
+            "name": std.extVar("RUN_NAME"),
             "project": "allennlp-maml-parsing",
         },
     }
