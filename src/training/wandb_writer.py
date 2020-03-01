@@ -40,8 +40,9 @@ class WandBWriter(FromParams):
         wandb_config: Dict[str, Any],
     ) -> None:
 
+        log = wandb_config.pop("log", None)
         wandb.init(config=config, **wandb_config)
-        wandb.watch(model)
+        wandb.watch(model, log=log)
 
     def log(self, metrics, step, prefix=""):
         wandb.log({(prefix + k): v for k, v in metrics.items()}, step=step)
