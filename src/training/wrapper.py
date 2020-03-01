@@ -116,6 +116,10 @@ class BaseWrapper(Registrable):
     def __call__(self, tasks, train=True, meta_train=True):
         return self.run_tasks(tasks, train=train, meta_train=meta_train)
 
+    @property
+    def container(self):
+        return self._container
+
     @abstractmethod
     def _partial_meta_update(self, loss, final):
         """Meta-model specific meta update rule.

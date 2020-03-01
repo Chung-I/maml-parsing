@@ -387,7 +387,7 @@ class MetaTrainer(TrainerBase):
 
             # Update the description with the latest metrics
             metrics = training_util.get_metrics(
-                self.wrapper._container,
+                self.wrapper.container,
                 train_loss,
                 batches_this_epoch,
                 world_size=self._world_size,
@@ -416,7 +416,7 @@ class MetaTrainer(TrainerBase):
             dist.barrier()
 
         metrics = training_util.get_metrics(
-            self.wrapper._container,
+            self.wrapper.container,
             train_loss,
             batches_this_epoch,
             reset=True,
@@ -819,7 +819,7 @@ class MetaTrainer(TrainerBase):
 
         wandb_config = params.pop("wandb", None)
         if wandb_config is not None:
-            writer = WandBWriter(config, wrapper._container, wandb_config)
+            writer = WandBWriter(config, wrapper.container, wandb_config)
 
         params.assert_empty(cls.__name__)
         return cls(
