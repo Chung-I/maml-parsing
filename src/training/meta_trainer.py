@@ -51,6 +51,7 @@ class MetaTrainer(TrainerBase):
         num_epochs: int = 20,
         serialization_dir: Optional[str] = None,
         num_serialized_models_to_keep: int = 20,
+        save_embedder: bool = True,
         keep_serialized_model_every_num_seconds: int = None,
         checkpointer: Checkpointer = None,
         model_save_interval: float = None,
@@ -209,6 +210,7 @@ class MetaTrainer(TrainerBase):
         self.optimizer = optimizer
         self.train_datas = train_datasets
         self._validation_datas = validation_datasets
+        self._save_embedder = save_embedder
 
         if patience is None:  # no early stopping
             if validation_datasets:
@@ -643,9 +645,14 @@ class MetaTrainer(TrainerBase):
         if self._momentum_scheduler is not None:
             training_states["momentum_scheduler"] = self._momentum_scheduler.state_dict()
 
+        if self._save_embedder:
+            model_state = self.model.state_dict()
+        else:
+            model_state = filter_state_dict(self.model.state_dict(),
+                lambda k, v: 'text_field_embedder' not in k)
+
         self._checkpointer.save_checkpoint(
-            model_state=filter_state_dict(self.model.state_dict(),
-                                          lambda k, v: 'text_field_embedder' not in k),
+            model_state=model_state,
             epoch=epoch,
             training_states=training_states,
             is_best_so_far=self._metric_tracker.is_best_so_far(),

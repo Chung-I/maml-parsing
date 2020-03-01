@@ -63,8 +63,6 @@ class TransformerEmbedder(TokenEmbedder):
                  dropout: float = 0.0,
                  combine_layers: str = "mix") -> None:
         super().__init__()
-        import pdb
-        pdb.set_trace()
         self.transformer_model = PretrainedAutoModel.load(model_name)
         self._max_length = max_length
         # I'm not sure if this works for all models; open an issue on github if you find a case
@@ -147,8 +145,6 @@ class TransformerEmbedder(TokenEmbedder):
         # Shape: [batch_size, num_wordpieces, embedding_size],
         # or if self._max_length is not None:
         # [batch_size * num_segments, self._max_length, embedding_size]
-        import pdb
-        pdb.set_trace()
         layers = self.transformer_model(
             input_ids=token_ids, token_type_ids=type_ids, attention_mask=transformer_mask
         )[-1][1:]

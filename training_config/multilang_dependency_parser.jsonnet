@@ -38,7 +38,7 @@ local READERS(xs, alternate=true) = {
 };
 
 local UD_ROOT = std.extVar("UD_ROOT");
-local DATA_PATH(lang, split) = UD_ROOT + "*/" + lang + "-ud-" + split + ".conllu";
+local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
 
 {
     "dataset_readers": READERS(TRAIN_LANGS),
@@ -50,14 +50,14 @@ local DATA_PATH(lang, split) = UD_ROOT + "*/" + lang + "-ud-" + split + ".conllu
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 32,
+        "batch_size": 8,
         "sorting_keys": [["words", "roberta___mask"]],
-        "instances_per_epoch": 32000,
+        "instances_per_epoch": 8000,
     },
     "validation_iterator": {
         "type": "bucket",
         "sorting_keys": [["words", "roberta___mask"]],
-        "batch_size": 32,
+        "batch_size": 8,
     },
     "model": {
         "type": "ud_biaffine_parser_multilang",
@@ -67,11 +67,7 @@ local DATA_PATH(lang, split) = UD_ROOT + "*/" + lang + "-ud-" + split + ".conllu
         "input_dropout": 0.33,
         "encoder": {
             "type": "pass_through",
-            // "bidirectional": true,
-            // "dropout": 0.33,
-            // "hidden_size": 200,
-            // "input_size": 818,
-            // "num_layers": 2
+            "input_dim": 818,
         },
         "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
@@ -85,7 +81,7 @@ local DATA_PATH(lang, split) = UD_ROOT + "*/" + lang + "-ud-" + split + ".conllu
                 "roberta": {
                     "type": "transformer_pretrained_mismatched",
                     "model_name": MODEL_NAME,
-                    "requires_grad": false,
+                    "requires_grad": true,
                     "max_length": MAX_LEN,
                     "layer_dropout": 0.1,
                     "dropout": 0.1,
@@ -103,7 +99,7 @@ local DATA_PATH(lang, split) = UD_ROOT + "*/" + lang + "-ud-" + split + ".conllu
         [lang]: DATA_PATH(lang, "dev") for lang in DEV_LANGS
     },
     "test_data_paths": {
-        [lang]: UD_ROOT + "conll18-ud-test/" + lang + "-*.conllu" for lang in TEST_LANGS
+        [lang]: DATA_PATH(lang, "test") for lang in TEST_LANGS
     },
     "trainer": {
         "type": "meta",
@@ -111,12 +107,12 @@ local DATA_PATH(lang, split) = UD_ROOT + "*/" + lang + "-ud-" + split + ".conllu
         "num_epochs": 40,
         "optimizer": {
           "type": "adam",
-          "lr": 5e-5,
+          "lr": 3e-5,
         },
         "patience": 10,
         "grad_norm": 5.0,
         "validation_metric": "+LAS_AVG",
-        "num_serialized_models_to_keep": 2,
+        "num_serialized_models_to_keep": 20,
         "num_gradient_accumulation_steps": 2,
         "wrapper": {
             "type": "reptile",
