@@ -81,7 +81,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
                 "roberta": {
                     "type": "transformer_pretrained_mismatched",
                     "model_name": MODEL_NAME,
-                    "requires_grad": false,
+                    "requires_grad": true,
                     "max_length": MAX_LEN,
                     "layer_dropout": 0.1,
                     "dropout": 0.1,
