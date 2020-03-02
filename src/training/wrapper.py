@@ -264,10 +264,6 @@ class BaseWrapper(Wrapper):
         cuda_device: int = -1,
     ) -> "Wrapper":
 
-        typ3 = params.pop("type", "default")
-
-        klass: Type[Wrapper] = Wrapper.by_name(typ3)  # type: ignore
-
         grad_norm = params.pop_float("grad_norm", None)
         grad_clipping = params.pop_float("grad_clipping", None)
         optimizer_cls = params.pop("optimizer_cls", "SGD")
@@ -275,7 +271,7 @@ class BaseWrapper(Wrapper):
 
         params.assert_empty(cls.__name__)
 
-        return klass(
+        return cls(
             model,
             meta_optimizer,
             optimizer_cls,
