@@ -114,6 +114,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "validation_metric": "+LAS_AVG",
         // "num_serialized_models_to_keep": 20,
         "num_gradient_accumulation_steps": 1,
+        "tasks_per_step": 10,
         "wrapper": {
             "type": "multi",
         },
