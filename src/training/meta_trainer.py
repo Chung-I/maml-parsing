@@ -71,6 +71,7 @@ class MetaTrainer(TrainerBase):
         world_size: int = 1,
         num_gradient_accumulation_steps: int = 1,
         wrapper: Optional[Wrapper] = None,
+        tasks_per_step: int = 0,
         writer: WandBWriter = None,
     ) -> None:
         """
@@ -286,6 +287,7 @@ class MetaTrainer(TrainerBase):
         else:
             self._pytorch_model = self.model
 
+        self._tasks_per_step = tasks_per_step if tasks_per_step > 0 else len(self.train_datas.items())
         self.wrapper = wrapper
 
     def rescale_gradients(self) -> Optional[float]:
@@ -331,22 +333,16 @@ class MetaTrainer(TrainerBase):
 
         # Get tqdm for the training batches
 
-        batch_generators = {key: self.iterator(train_data, num_epochs=1, shuffle=self.shuffle)
-            for key, train_data in self.train_datas.items()}
-        batch_group_generators = {key: lazy_groups_of(
+        batch_generators = [self.iterator(train_data, num_epochs=1, shuffle=self.shuffle)
+            for key, train_data in self.train_datas.items()]
+        batch_group_generators = [lazy_groups_of(
             batch_generator, self._num_gradient_accumulation_steps
-        ) for key, batch_generator in batch_generators.items()}
-        num_training_batches = {key: math.ceil(
+        ) for batch_generator in batch_generators]
+        num_training_batches = [math.ceil(
             self.iterator.get_num_batches(train_data) / self._num_gradient_accumulation_steps
-        ) for key, train_data in self.train_datas.items()}
-        # Having multiple tqdm bars in case of distributed training will be a mess. Hence only the master's
-        # progress is shown
-        if self._master:
-            batch_group_generators_tqdm = [Tqdm.tqdm(
-                batch_group_generator, total=num_training_batches[key]
-            ) for key, batch_group_generator in batch_group_generators.items()]
-        else:
-            batch_group_generators_tqdm = [generator for key, generator in batch_group_generators.items()]
+        ) for key, train_data in self.train_datas.items()]
+        assert len(set(num_training_batches)) == 1, "num_training_batches doesn't agree"
+        num_tasks = len(batch_group_generators) 
 
         self._last_log = time.time()
         last_save_time = time.time()
@@ -358,7 +354,11 @@ class MetaTrainer(TrainerBase):
         logger.info("Training")
 
         cumulative_batch_group_size = 0
-        for tasks in zip(*batch_group_generators_tqdm):
+        tqdm_bar = Tqdm.tqdm(range(num_training_batches[0]))
+        for _ in tqdm_bar:
+            randperms = torch.randperm(len(batch_group_generators)).tolist()
+            tasks = [next(batch_group_generators[idx]) for idx in randperms[:self._tasks_per_step]]
+
             batches_this_epoch += 1
             self._batch_num_total += 1
             batch_num_total = self._batch_num_total
@@ -397,7 +397,7 @@ class MetaTrainer(TrainerBase):
             # Updating tqdm only for the master as the trainers wouldn't have one
             if self._master:
                 description = training_util.description_from_metrics(metrics)
-                batch_group_generators_tqdm[0].set_description(description, refresh=False)
+                tqdm_bar.set_description(description, refresh=False)
 
             # Save model if needed.
             if (
@@ -811,6 +811,7 @@ class MetaTrainer(TrainerBase):
         world_size = params.pop_int("world_size", 1)
 
         num_gradient_accumulation_steps = params.pop("num_gradient_accumulation_steps", 1)
+        tasks_per_step = params.pop_int("tasks_per_step", 0)
         wrapper = Wrapper.from_params(
             model,
             optimizer,
@@ -852,5 +853,6 @@ class MetaTrainer(TrainerBase):
             world_size=world_size,
             num_gradient_accumulation_steps=num_gradient_accumulation_steps,
             wrapper=wrapper,
+            tasks_per_step=tasks_per_step,
             writer=writer,
         )
