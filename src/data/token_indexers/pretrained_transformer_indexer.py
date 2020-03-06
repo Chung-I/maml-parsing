@@ -214,7 +214,7 @@ class PretrainedTransformerIndexer(TokenIndexer):
                     val,
                     padding_lengths[key],
                     default_value=lambda: 0
-                    if key in {"mask", "type_ids"}
+                    if key in {"mask", "type_ids", "wordpiece_mask", "segment_concat_mask"}
                     else self._tokenizer.pad_token_id,
                 )
             )

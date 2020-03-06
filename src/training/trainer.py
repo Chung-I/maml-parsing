@@ -1,6 +1,6 @@
+import datetime
 import logging
 import math
-import datetime
 import os
 import time
 import traceback
@@ -21,29 +21,28 @@ from allennlp.models.model import Model
 from allennlp.nn import util as nn_util
 from allennlp.training import util as training_util
 from allennlp.training.checkpointer import Checkpointer
-from allennlp.training.learning_rate_schedulers import LearningRateScheduler
+from allennlp.training.learning_rate_schedulers import LearningRateScheduler, SlantedTriangular
 from allennlp.training.metric_tracker import MetricTracker
 from allennlp.training.momentum_schedulers import MomentumScheduler
 from allennlp.training.moving_average import MovingAverage
 from allennlp.training.optimizers import Optimizer
-from src.training.wandb_writer import WandBWriter
 from allennlp.training.trainer_base import TrainerBase
 
-from src.training.wrapper import Wrapper
+from src.training.wandb_writer import WandBWriter
 from src.training.util import as_flat_dict, filter_state_dict
 
 logger = logging.getLogger(__name__)
 
 
-@TrainerBase.register("meta")
-class MetaTrainer(TrainerBase):
+@TrainerBase.register("wandb")
+class Trainer(TrainerBase):
     def __init__(
         self,
         model: Model,
         optimizer: torch.optim.Optimizer,
         iterator: DataIterator,
-        train_datasets: Dict[str, Iterable[Instance]],
-        validation_datasets: Optional[Dict[str, Iterable[Instance]]] = None,
+        train_dataset: Iterable[Instance],
+        validation_dataset: Optional[Iterable[Instance]] = None,
         patience: Optional[int] = None,
         validation_metric: str = "-loss",
         validation_iterator: DataIterator = None,
@@ -51,7 +50,6 @@ class MetaTrainer(TrainerBase):
         num_epochs: int = 20,
         serialization_dir: Optional[str] = None,
         num_serialized_models_to_keep: int = 20,
-        save_embedder: bool = True,
         keep_serialized_model_every_num_seconds: int = None,
         checkpointer: Checkpointer = None,
         model_save_interval: float = None,
@@ -70,8 +68,6 @@ class MetaTrainer(TrainerBase):
         local_rank: int = 0,
         world_size: int = 1,
         num_gradient_accumulation_steps: int = 1,
-        wrapper: Optional[Wrapper] = None,
-        tasks_per_step: int = 0,
         writer: WandBWriter = None,
     ) -> None:
         """
@@ -209,12 +205,11 @@ class MetaTrainer(TrainerBase):
         self._validation_iterator = validation_iterator
         self.shuffle = shuffle
         self.optimizer = optimizer
-        self.train_datas = train_datasets
-        self._validation_datas = validation_datasets
-        self._save_embedder = save_embedder
+        self.train_data = train_dataset
+        self._validation_data = validation_dataset
 
         if patience is None:  # no early stopping
-            if validation_datasets:
+            if validation_dataset:
                 logger.warning(
                     "You provided a validation dataset but patience was set to None, "
                     "meaning that early stopping is disabled"
@@ -287,9 +282,6 @@ class MetaTrainer(TrainerBase):
         else:
             self._pytorch_model = self.model
 
-        self._tasks_per_step = tasks_per_step if tasks_per_step > 0 else len(self.train_datas.items())
-        self.wrapper = wrapper
-
     def rescale_gradients(self) -> Optional[float]:
         return training_util.rescale_gradients(self.model, self._grad_norm)
 
@@ -332,17 +324,22 @@ class MetaTrainer(TrainerBase):
         self._pytorch_model.train()
 
         # Get tqdm for the training batches
-
-        batch_generators = [self.iterator(train_data, num_epochs=1, shuffle=self.shuffle)
-            for key, train_data in self.train_datas.items()]
-        batch_group_generators = [lazy_groups_of(
+        batch_generator = self.iterator(self.train_data, num_epochs=1, shuffle=self.shuffle)
+        batch_group_generator = lazy_groups_of(
             batch_generator, self._num_gradient_accumulation_steps
-        ) for batch_generator in batch_generators]
-        num_training_batches = [math.ceil(
-            self.iterator.get_num_batches(train_data) / self._num_gradient_accumulation_steps
-        ) for key, train_data in self.train_datas.items()]
-        assert len(set(num_training_batches)) == 1, "num_training_batches doesn't agree"
-        num_tasks = len(batch_group_generators) 
+        )
+        num_training_batches = math.ceil(
+            self.iterator.get_num_batches(self.train_data) / self._num_gradient_accumulation_steps
+        )
+
+        # Having multiple tqdm bars in case of distributed training will be a mess. Hence only the master's
+        # progress is shown
+        if self._master:
+            batch_group_generator_tqdm = Tqdm.tqdm(
+                batch_group_generator, total=num_training_batches
+            )
+        else:
+            batch_group_generator_tqdm = batch_group_generator
 
         self._last_log = time.time()
         last_save_time = time.time()
@@ -354,21 +351,21 @@ class MetaTrainer(TrainerBase):
         logger.info("Training")
 
         cumulative_batch_group_size = 0
-        tqdm_bar = Tqdm.tqdm(range(num_training_batches[0]))
-        for _ in tqdm_bar:
-            randperms = torch.randperm(len(batch_group_generators)).tolist()
-            tasks = [next(batch_group_generators[idx]) for idx in randperms[:self._tasks_per_step]]
-
+        for batch_group in batch_group_generator_tqdm:
             batches_this_epoch += 1
             self._batch_num_total += 1
             batch_num_total = self._batch_num_total
 
             self.optimizer.zero_grad()
 
-            loss = self.wrapper(tasks=tasks, train=True, meta_train=True)
-
-            self._writer.log({"step_loss": loss}, step=self._batch_num_total)
-            train_loss += loss
+            for batch in batch_group:
+                loss = self.batch_loss(batch, for_training=True)
+                if torch.isnan(loss):
+                    raise ValueError("nan loss encountered")
+                loss = loss / len(batch_group)
+                loss.backward()
+                self._writer.log({"step_loss": loss.item()}, step=self._batch_num_total)
+                train_loss += loss.item()
 
             batch_grad_norm = self.rescale_gradients()
 
@@ -387,7 +384,7 @@ class MetaTrainer(TrainerBase):
 
             # Update the description with the latest metrics
             metrics = training_util.get_metrics(
-                self.wrapper.container,
+                self.model,
                 train_loss,
                 batches_this_epoch,
                 world_size=self._world_size,
@@ -397,7 +394,7 @@ class MetaTrainer(TrainerBase):
             # Updating tqdm only for the master as the trainers wouldn't have one
             if self._master:
                 description = training_util.description_from_metrics(metrics)
-                tqdm_bar.set_description(description, refresh=False)
+                batch_group_generator_tqdm.set_description(description, refresh=False)
 
             # Save model if needed.
             if (
@@ -416,7 +413,7 @@ class MetaTrainer(TrainerBase):
             dist.barrier()
 
         metrics = training_util.get_metrics(
-            self.wrapper.container,
+            self.model,
             train_loss,
             batches_this_epoch,
             reset=True,
@@ -445,37 +442,33 @@ class MetaTrainer(TrainerBase):
         else:
             val_iterator = self.iterator
 
+        val_generator = val_iterator(self._validation_data, num_epochs=1, shuffle=False)
+        num_validation_batches = val_iterator.get_num_batches(self._validation_data)
+        val_generator_tqdm = Tqdm.tqdm(val_generator, total=num_validation_batches)
         batches_this_epoch = 0
         val_loss = 0
-        val_generators = {key: val_iterator(val_data, num_epochs=1, shuffle=False)
-            for key, val_data in self._validation_datas.items()}
-        num_validation_batches = {key: val_iterator.get_num_batches(val_data)
-            for key, val_data in self._validation_datas.items()}
-        val_generators_tqdm = [Tqdm.tqdm(val_generator, total=num_validation_batches[key])
-            for key, val_generator in val_generators.items()]
-        for val_generator_tqdm in val_generators_tqdm:
-            for batch in val_generator_tqdm:
-                loss = self.batch_loss(batch, for_training=False)
-                if loss is not None:
-                    # You shouldn't necessarily have to compute a loss for validation, so we allow for
-                    # `loss` to be None.  We need to be careful, though - `batches_this_epoch` is
-                    # currently only used as the divisor for the loss function, so we can safely only
-                    # count those batches for which we actually have a loss.  If this variable ever
-                    # gets used for something else, we might need to change things around a bit.
-                    batches_this_epoch += 1
-                    val_loss += loss.detach().cpu().numpy()
+        for batch in val_generator_tqdm:
+
+            loss = self.batch_loss(batch, for_training=False)
+            if loss is not None:
+                # You shouldn't necessarily have to compute a loss for validation, so we allow for
+                # `loss` to be None.  We need to be careful, though - `batches_this_epoch` is
+                # currently only used as the divisor for the loss function, so we can safely only
+                # count those batches for which we actually have a loss.  If this variable ever
+                # gets used for something else, we might need to change things around a bit.
+                batches_this_epoch += 1
+                val_loss += loss.detach().cpu().numpy()
 
             # Update the description with the latest metrics
-                val_metrics = training_util.get_metrics(
-                    self.model,
-                    val_loss,
-                    batches_this_epoch,
-                    world_size=self._world_size,
-                    cuda_device=[self.cuda_device],
-                )
-                description = training_util.description_from_metrics(val_metrics)
-                for val_generator_tqdm in val_generators_tqdm:
-                    val_generator_tqdm.set_description(description, refresh=False)
+            val_metrics = training_util.get_metrics(
+                self.model,
+                val_loss,
+                batches_this_epoch,
+                world_size=self._world_size,
+                cuda_device=[self.cuda_device],
+            )
+            description = training_util.description_from_metrics(val_metrics)
+            val_generator_tqdm.set_description(description, refresh=False)
 
         # Now restore the original parameter values.
         if self._moving_average is not None:
@@ -512,6 +505,13 @@ class MetaTrainer(TrainerBase):
         for key, value in self._metric_tracker.best_epoch_metrics.items():
             metrics["best_validation_" + key] = value
 
+        num_training_batches = math.ceil(
+            self.iterator.get_num_batches(self.train_data) / self._num_gradient_accumulation_steps
+        )
+
+        if isinstance(self._learning_rate_scheduler, SlantedTriangular):
+            self._learning_rate_scheduler.num_steps_per_epoch = num_training_batches
+
         for epoch in range(epoch_counter, self._num_epochs):
             epoch_start_time = time.time()
             train_metrics = self._train_epoch(epoch)
@@ -525,7 +525,7 @@ class MetaTrainer(TrainerBase):
                 if key.startswith("gpu_"):
                     metrics["peak_" + key] = max(metrics.get("peak_" + key, 0), value)
 
-            if self._validation_datas is not None:
+            if self._validation_data is not None:
                 with torch.no_grad():
                     # We have a validation set, so compute all the metrics on it.
                     val_loss, num_batches = self._validation_loss()
@@ -553,8 +553,10 @@ class MetaTrainer(TrainerBase):
                         break
 
             if self._master:
-                self._writer.log(train_metrics, step=self._batch_num_total, prefix="train_")
-                self._writer.log(val_metrics, step=self._batch_num_total, prefix="val_")
+                self._writer.log({k: v for k, v in train_metrics.items() if 'AVG' not in k},
+                                 step=self._batch_num_total, prefix="train_")
+                self._writer.log({k: v for k, v in val_metrics.items() if 'AVG' not in k},
+                                 step=self._batch_num_total, prefix="val_")
 
             # Create overall metrics dict
             training_elapsed_time = time.time() - training_start_time
@@ -645,14 +647,8 @@ class MetaTrainer(TrainerBase):
         if self._momentum_scheduler is not None:
             training_states["momentum_scheduler"] = self._momentum_scheduler.state_dict()
 
-        if self._save_embedder:
-            model_state = self.model.state_dict()
-        else:
-            model_state = filter_state_dict(self.model.state_dict(),
-                lambda k, v: 'text_field_embedder' not in k)
-
         self._checkpointer.save_checkpoint(
-            model_state=model_state,
+            model_state=self.model.state_dict(),
             epoch=epoch,
             training_states=training_states,
             is_best_so_far=self._metric_tracker.is_best_so_far(),
@@ -686,7 +682,7 @@ class MetaTrainer(TrainerBase):
             # No checkpoint to restore, start at 0
             return 0
 
-        missing_keys, _ = self.model.load_state_dict(model_state, strict=False)
+        self.model.load_state_dict(model_state)
         self.optimizer.load_state_dict(training_state["optimizer"])
         if (
             self._learning_rate_scheduler is not None
@@ -729,18 +725,18 @@ class MetaTrainer(TrainerBase):
         serialization_dir: str,
         recover: bool = False,
         local_rank: int = 0,
-    ) -> "MetaTrainer":
+    ) -> "Trainer":
 
         from allennlp.training.trainer import Trainer
-        from src.training.trainer_pieces import MetaTrainerPieces
+        from allennlp.training.trainer_pieces import TrainerPieces
 
         config = dict(as_flat_dict(params.as_dict()))
-        pieces = MetaTrainerPieces.from_params(params, serialization_dir, recover)
+        pieces = TrainerPieces.from_params(params, serialization_dir, recover)
         model = pieces.model
         serialization_dir = serialization_dir
         iterator = pieces.iterator
-        train_datas = pieces.train_datasets
-        validation_datas = pieces.validation_datasets
+        train_data = pieces.train_dataset
+        validation_data = pieces.validation_dataset
         params = pieces.params
         validation_iterator = pieces.validation_iterator
 
@@ -799,7 +795,6 @@ class MetaTrainer(TrainerBase):
                 num_serialized_models_to_keep=num_serialized_models_to_keep,
                 keep_serialized_model_every_num_seconds=keep_serialized_model_every_num_seconds,
             )
-
         model_save_interval = params.pop_float("model_save_interval", None)
         summary_interval = params.pop_int("summary_interval", 100)
         histogram_interval = params.pop_int("histogram_interval", None)
@@ -811,24 +806,19 @@ class MetaTrainer(TrainerBase):
         world_size = params.pop_int("world_size", 1)
 
         num_gradient_accumulation_steps = params.pop("num_gradient_accumulation_steps", 1)
-        tasks_per_step = params.pop_int("tasks_per_step", 0)
-        wrapper = Wrapper.from_params(
-            model,
-            optimizer,
-            params.pop("wrapper"),
-            cuda_device)
 
+        writer = None
         wandb_config = params.pop("wandb", None)
         if wandb_config is not None:
-            writer = WandBWriter(config, wrapper.container, wandb_config)
+            writer = WandBWriter(config, model, wandb_config)
 
         params.assert_empty(cls.__name__)
         return cls(
             model,
             optimizer,
             iterator,
-            train_datas,
-            validation_datas,
+            train_data,
+            validation_data,
             patience=patience,
             validation_metric=validation_metric,
             validation_iterator=validation_iterator,
@@ -852,7 +842,5 @@ class MetaTrainer(TrainerBase):
             local_rank=local_rank,
             world_size=world_size,
             num_gradient_accumulation_steps=num_gradient_accumulation_steps,
-            wrapper=wrapper,
-            tasks_per_step=tasks_per_step,
             writer=writer,
         )
