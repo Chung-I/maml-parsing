@@ -42,8 +42,8 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
 
 {
     "dataset_readers": READERS(TRAIN_LANGS),
-    "validation_dataset_readers": READERS(DEV_LANGS, false),
-    "datasets_for_vocab_creation": ["train", "validation"],
+    // "validation_dataset_readers": READERS(DEV_LANGS, false),
+    // "datasets_for_vocab_creation": ["train", "validation"],
     "vocabulary": {
         "type": "from_files",
         "directory": "data/vocabulary"
@@ -52,13 +52,14 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "type": "bucket",
         "batch_size": 16,
         "sorting_keys": [["words", "roberta___mask"]],
-        "instances_per_epoch": 8000,
+        "instances_per_epoch": 24000,
     },
-    "validation_iterator": {
-        "type": "bucket",
-        "sorting_keys": [["words", "roberta___mask"]],
-        "batch_size": 8,
-    },
+    // "validation_iterator": {
+    //     "type": "bucket",
+    //     "sorting_keys": [["words", "roberta___mask"]],
+    //     "batch_size": 32,
+    //     "instances_per_epoch": 320,
+    // },
     "model": {
         "type": "ud_biaffine_parser_multilang",
         "arc_representation_dim": 500,
@@ -81,7 +82,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
                 "roberta": {
                     "type": "transformer_pretrained_mismatched",
                     "model_name": MODEL_NAME,
-                    "requires_grad": false,
+                    "requires_grad": true,
                     "max_length": MAX_LEN,
                     "layer_dropout": 0.1,
                     "dropout": 0.1,
@@ -94,9 +95,9 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
     "train_data_paths": {
         [lang]: DATA_PATH(lang, "train") for lang in TRAIN_LANGS
     },
-    "validation_data_paths": {
-        [lang]: DATA_PATH(lang, "dev") for lang in DEV_LANGS
-    },
+    // "validation_data_paths": {
+    //     [lang]: DATA_PATH(lang, "dev") for lang in DEV_LANGS
+    // },
     "test_data_paths": {
         [lang]: DATA_PATH(lang, "test") for lang in TEST_LANGS
     },
@@ -111,7 +112,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "patience": 10,
         "grad_norm": 5.0,
         "validation_metric": "+LAS_AVG",
-        "num_serialized_models_to_keep": 20,
+        // "num_serialized_models_to_keep": 20,
         "num_gradient_accumulation_steps": 1,
         "wrapper": {
             "type": "multi",
