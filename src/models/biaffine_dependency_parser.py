@@ -335,9 +335,8 @@ class BiaffineDependencyParser(Model):
             drop_mask = dropout_mask & mask
             return drop_mask
         else:
-            return mask
+            return mask.new_zeros(mask.size()).bool()
 
-    @overrides
     def decode(self, output_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
 
         head_tags = output_dict.pop("head_tags").cpu().detach().numpy()

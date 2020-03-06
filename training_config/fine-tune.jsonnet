@@ -6,13 +6,15 @@
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
 local MODEL_NAME = "xlm-roberta-base";
+local NUM_EPOCHS = std.parseInt(std.extVar("NUM_EPOCHS"));
+local BS = 8;
 local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
     "languages": [x],
     "alternate": alternate,
     "instances_per_file": 32,
     "is_first_pass_for_vocab": false,
-    "lazy": true,
+    "lazy": false,
     "token_indexers": {
         "roberta": {
             "type": "transformer_pretrained_mismatched",
@@ -25,66 +27,57 @@ local BASE_READER(x, alternate=true) = {
 
 local LANG = std.extVar("FT_LANG");
 
-local TRAIN_LANGS = [LANG];
-
-local DEV_LANGS = TRAIN_LANGS;
-
-local TEST_LANGS = [LANG];
-
-local READERS(xs, alternate=true) = {
-    [x]: BASE_READER(x, alternate) for x in xs
-};
+local READER(x, alternate=true) = BASE_READER(x, alternate);
 
 local UD_ROOT = std.extVar("UD_ROOT");
 local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
 
 {
-    "dataset_readers": READERS(TRAIN_LANGS),
-    "validation_dataset_readers": READERS(DEV_LANGS, false),
+    "dataset_reader": READER(LANG, false),
+    "validation_dataset_reader": READER(LANG, false),
     "vocabulary": {
         "type": "from_files",
         "directory": "data/vocabulary"
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 2,
+        "batch_size": BS,
         "sorting_keys": [["words", "roberta___mask"]],
-        "instances_per_epoch": 8000,
     },
     "validation_iterator": {
         "type": "bucket",
         "sorting_keys": [["words", "roberta___mask"]],
-        "batch_size": 16,
+        "batch_size": BS,
     },
     "model": {
+      "type": "from_archive",
+      "archive_file": std.extVar("ARCHIVE_PATH"),
+    },
     // UDTB v2.0 is available at https://github.com/ryanmcd/uni-dep-tb
     // Set TRAIN_PATHNAME='std/**/*train.conll'
-    "train_data_paths": {
-        [lang]: DATA_PATH(lang, "train") for lang in TRAIN_LANGS
-    },
-    "validation_data_paths": {
-        [lang]: DATA_PATH(lang, "dev") for lang in DEV_LANGS
-    },
-    "test_data_paths": {
-        [lang]: DATA_PATH(lang, "test") for lang in TEST_LANGS
-    },
+    "train_data_path": DATA_PATH(LANG, "train"),
+    "validation_data_path": DATA_PATH(LANG, "dev"),
+    "test_data_path": DATA_PATH(LANG, "test"),
     "trainer": {
-        "type": "meta",
+        "type": "wandb",
         "cuda_device": 0,
-        "num_epochs": 40,
+        "num_epochs": NUM_EPOCHS,
         "optimizer": {
           "type": "adam",
-          "lr": 1e-5,
+          "lr": 5e-5,
         },
-        "patience": 10,
+        "learning_rate_scheduler": {
+          "type": "slanted_triangular",
+          "num_epochs": NUM_EPOCHS,
+          "num_steps_per_epoch": 1000, // dummy value, modified in the code
+        },
+        "patience": 15,
         "grad_norm": 5.0,
         "validation_metric": "+LAS_AVG",
+        "num_serialized_models_to_keep": 1,
         "num_gradient_accumulation_steps": 1,
-        "wrapper": {
-            "type": "multi",
-        },
         "wandb": {
-            "name": std.extVar("RUN_NAME") + "_" + LANG,
+            "name": std.extVar("RUN_NAME"),
             "project": "allennlp-maml-parsing",
         },
     }

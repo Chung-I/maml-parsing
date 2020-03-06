@@ -55,7 +55,8 @@ class MultiWrapper(Wrapper):
                  model: Model,
                  optimizer: torch.optim.Optimizer,
                  cuda_device: int):
-        super(Wrapper, self).__init__()
+        super(MultiWrapper, self).__init__()
+        self._counter = 0
         self.model = model
         self.optimizer = optimizer
         self.cuda_device = cuda_device
@@ -67,6 +68,7 @@ class MultiWrapper(Wrapper):
     def __call__(self, tasks, train=True, meta_train=False):
         # argument key meta_train is dummy
         total_loss = 0.0
+        self._counter = len(tasks)
         for task in tasks:
             task_loss = self.run_task(task, train=train)
             total_loss += task_loss
@@ -91,6 +93,7 @@ class MultiWrapper(Wrapper):
             output_dict = self.model(**inputs)
             loss = output_dict["loss"]
             loss = loss / len(batches)
+            loss = loss / self._counter
             train_loss += loss.item()
             if not train:
                 continue
@@ -132,7 +135,7 @@ class BaseWrapper(Wrapper):
         grad_norm: Optional[float] = None,
         grad_clipping: Optional[float] = None,
     ):
-        super(Wrapper, self).__init__()
+        super(BaseWrapper, self).__init__()
         self.model = model
         self.meta_optimizer = meta_optimizer
         self._grad_clipping = grad_clipping
@@ -244,10 +247,11 @@ class BaseWrapper(Wrapper):
 
             grad_norm = self.rescale_gradients()
 
+            optimizer.step()
+
             if meta_train:
                 self._partial_meta_update(loss, final)
 
-            optimizer.step()
             optimizer.zero_grad()
 
             if final:
