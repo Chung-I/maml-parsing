@@ -5,7 +5,7 @@
 // To recompute alignemts for ELMo, refer to: https://github.com/TalSchuster/CrossLingualELMo
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
-local MODEL_NAME = "xlm-roberta-large";
+local MODEL_NAME = "xlm-roberta-base";
 local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
     "languages": [x],
@@ -68,7 +68,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "input_dropout": 0.33,
         "encoder": {
             "type": "pass_through",
-            "input_dim": 1074,
+            "input_dim": 818,
         },
         "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
