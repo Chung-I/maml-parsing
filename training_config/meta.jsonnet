@@ -5,7 +5,7 @@
 // To recompute alignemts for ELMo, refer to: https://github.com/TalSchuster/CrossLingualELMo
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
-local MODEL_NAME = "xlm-roberta-large";
+local MODEL_NAME = "xlm-roberta-base";
 local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
     "languages": [x],
@@ -50,9 +50,9 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 8,
+        "batch_size": 4,
         "sorting_keys": [["words", "roberta___mask"]],
-        "instances_per_epoch": 24000,
+        "instances_per_epoch": 160000,
     },
     // "validation_iterator": {
     //     "type": "bucket",
@@ -68,7 +68,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "input_dropout": 0.33,
         "encoder": {
             "type": "pass_through",
-            "input_dim": 1074,
+            "input_dim": 818,
         },
         "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
@@ -113,14 +113,14 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "grad_norm": 5.0,
         "validation_metric": "+LAS_AVG",
         // "num_serialized_models_to_keep": 20,
-        "num_gradient_accumulation_steps": 2,
+        "num_gradient_accumulation_steps": 4,
         "tasks_per_step": 10,
         "wrapper": {
-            "type": "reptile",
+            "type": "fomaml",
             "grad_norm": 5.0,
             "optimizer_cls": "Adam",
             "optimizer_kwargs": {
-                "lr": 3e-4
+                "lr": 3e-5,
             }
         },
         "wandb": {
