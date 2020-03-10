@@ -5,7 +5,7 @@
 // To recompute alignemts for ELMo, refer to: https://github.com/TalSchuster/CrossLingualELMo
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
-local MODEL_NAME = "xlm-roberta-large";
+local MODEL_NAME = "xlm-roberta-base";
 local NUM_EPOCHS = std.parseInt(std.extVar("NUM_EPOCHS"));
 local BS = 8;
 local BASE_READER(x, alternate=true) = {
