@@ -15,7 +15,6 @@ from allennlp.common.util import dump_metrics, gpu_memory_mb, peak_memory_mb, la
 from allennlp.data.instance import Instance
 from allennlp.data.iterators.data_iterator import DataIterator, TensorDict
 from allennlp.models.model import Model
-from allennlp.nn import util as nn_util
 from allennlp.training import util as training_util
 from allennlp.training.checkpointer import Checkpointer
 from allennlp.training.learning_rate_schedulers import LearningRateScheduler
@@ -25,7 +24,7 @@ from allennlp.training.moving_average import MovingAverage
 from allennlp.training.optimizers import Optimizer
 from allennlp.training.tensorboard_writer import TensorboardWriter
 
-from src.training.util import clone_state_dict
+from src.training.util import clone_state_dict, move_to_device
 
 class Wrapper(Registrable):
     def __init__(self):
@@ -37,7 +36,6 @@ class Wrapper(Registrable):
         model: Model,
         optimizer: Optimizer,
         params: Params,
-        cuda_device: int = -1,
     ) -> "Wrapper":
         typ3 = params.pop("type", "default")
         klass: Type[Wrapper] = Wrapper.by_name(typ3)  # type: ignore
@@ -46,20 +44,18 @@ class Wrapper(Registrable):
             klass.from_params.__func__ != Wrapper.from_params.__func__  # type: ignore
         )
         assert is_overriden, f"Class {klass.__name__} must override `from_params`."
-        return klass.from_params(model, optimizer, params, cuda_device)
+        return klass.from_params(model, optimizer, params)
 
 
 @Wrapper.register("multi")
 class MultiWrapper(Wrapper):
     def __init__(self,
                  model: Model,
-                 optimizer: torch.optim.Optimizer,
-                 cuda_device: int):
+                 optimizer: torch.optim.Optimizer):
         super(MultiWrapper, self).__init__()
         self._counter = 0
         self.model = model
         self.optimizer = optimizer
-        self.cuda_device = cuda_device
 
     @property
     def container(self):
@@ -73,9 +69,7 @@ class MultiWrapper(Wrapper):
             task_loss = self.run_task(task, train=train)
             total_loss += task_loss
 
-        avg_loss = total_loss / len(tasks)
-
-        return avg_loss
+        return total_loss
 
     def run_task(self, task, train):
         if train:
@@ -86,9 +80,10 @@ class MultiWrapper(Wrapper):
 
     def run_batches(self, batches, train=False):
         train_loss = 0.0
+        device = next(self.model.parameters()).device
 
         for n, inputs in enumerate(batches):
-            inputs = nn_util.move_to_device(inputs, self.cuda_device)
+            inputs = move_to_device(inputs, device)
 
             output_dict = self.model(**inputs)
             loss = output_dict["loss"]
@@ -107,10 +102,9 @@ class MultiWrapper(Wrapper):
         model: Model,
         meta_optimizer: torch.optim.Optimizer,
         params: Params,
-        cuda_device: int = -1,
     ) -> "Wrapper":
         params.assert_empty(cls.__name__)
-        return  cls(model, meta_optimizer, cuda_device)
+        return  cls(model, meta_optimizer)
 
 
 @Wrapper.register("default")
@@ -131,7 +125,6 @@ class BaseWrapper(Wrapper):
         meta_optimizer: torch.optim.Optimizer,
         optimizer_cls: str,
         optimizer_kwargs: Dict[str, Any],
-        cuda_device: int = -1,
         grad_norm: Optional[float] = None,
         grad_clipping: Optional[float] = None,
     ):
@@ -145,7 +138,6 @@ class BaseWrapper(Wrapper):
         training_util.enable_gradient_clipping(self.model, self._grad_clipping)
         self.optimizer_cls = getattr(torch.optim, optimizer_cls)
         self.optimizer_kwargs = optimizer_kwargs
-        self.cuda_device = cuda_device
 
     def rescale_gradients(self) -> Optional[float]:
         return training_util.rescale_gradients(self._container, self._grad_norm)
@@ -158,7 +150,7 @@ class BaseWrapper(Wrapper):
         return self._container
 
     @abstractmethod
-    def _partial_meta_update(self, loss, final):
+    def _partial_meta_update(self, num_batches):
         """Meta-model specific meta update rule.
 
         Arguments:
@@ -223,39 +215,31 @@ class BaseWrapper(Wrapper):
 
         train_loss = 0.0
         N = len(batches)
+        device = next(self._container.parameters()).device
 
         for n, inputs in enumerate(batches):
+            optimizer.zero_grad()
             # task specific
-            #inputs["pos_tags"] = inputs["pos_tags"].to(device)
-            #inputs["head_tags"] = inputs["head_tags"].to(device)
-            inputs = nn_util.move_to_device(inputs, self.cuda_device)
+            inputs = move_to_device(inputs, device)
 
             # Evaluate model
-            #loss = self.model(inputs)
             output_dict = self._container(**inputs)
             loss = output_dict["loss"]
             if torch.isnan(loss):
                 raise ValueError("nan loss encountered")
-            loss = loss / len(batches)
-            train_loss += loss.item()
+            train_loss += loss.item() / len(batches)
             # TRAINING #
             if not train:
                 continue
 
-            final = (n+1) == N
             loss.backward()
 
             grad_norm = self.rescale_gradients()
 
             optimizer.step()
 
-            if meta_train:
-                self._partial_meta_update(loss, final)
-
-            optimizer.zero_grad()
-
-            if final:
-                break
+        if meta_train:
+            self._partial_meta_update(len(batches))
 
         return train_loss
 
@@ -265,7 +249,6 @@ class BaseWrapper(Wrapper):
         model: Model,
         meta_optimizer: torch.optim.Optimizer,
         params: Params,
-        cuda_device: int = -1,
     ) -> "Wrapper":
 
         grad_norm = params.pop_float("grad_norm", None)
@@ -280,7 +263,6 @@ class BaseWrapper(Wrapper):
             meta_optimizer,
             optimizer_cls,
             optimizer_kwargs,
-            cuda_device=cuda_device,
             grad_norm=grad_norm,
             grad_clipping=grad_clipping
         )
@@ -307,7 +289,7 @@ class NoWrapper(BaseWrapper):
         self._container.load_state_dict(self.model.state_dict(keep_vars=True))
         return out
 
-    def _partial_meta_update(self, loss, final):
+    def _partial_meta_update(self, num_batches):
         pass
 
     def _final_meta_update(self):
@@ -342,10 +324,7 @@ class _FOWrapper(BaseWrapper):
             self._container.load_state_dict(self.model.state_dict(keep_vars=True))
         return super(_FOWrapper, self).run_task(task, train, meta_train)
 
-    def _partial_meta_update(self, loss, final):
-        if not final:
-            return
-
+    def _partial_meta_update(self, num_batches):
         if self._updates is None:
             self._updates = {}
             for n, p in self.model.state_dict(keep_vars=True).items():
@@ -362,7 +341,8 @@ class _FOWrapper(BaseWrapper):
                 continue
 
             if self._all_grads is True:
-                self._updates[n].add_(p.data)
+                trajectory = (self.model.state_dict()[n].data - p.data) / num_batches
+                self._updates[n].add_(trajectory)
             else:
                 self._updates[n].add_(p.grad.data)
 
@@ -375,7 +355,8 @@ class _FOWrapper(BaseWrapper):
                 continue
 
             if self._all_grads:
-                p.grad = p.data - self._updates[n].data
+                #p.grad = p.data - self._updates[n].data
+                p.grad = self._updates[n]
             else:
                 p.grad = self._updates[n]
 
@@ -403,6 +384,7 @@ class ReptileWrapper(_FOWrapper):
     def __init__(self, *args, **kwargs):
         super(ReptileWrapper, self).__init__(*args, **kwargs)
 
+
 @Wrapper.register("fomaml")
 class FOMAMLWrapper(_FOWrapper):
     """Wrapper for FOMAML.
@@ -419,3 +401,55 @@ class FOMAMLWrapper(_FOWrapper):
 
     def __init__(self, *args, **kwargs):
         super(FOMAMLWrapper, self).__init__(*args, **kwargs)
+
+
+class MAMLWrapper(object):
+
+    """Wrapper around the MAML meta-learner.
+    Arguments:
+        model (nn.Module): classifier.
+        optimizer_cls: optimizer class.
+        meta_optimizer_cls: meta optimizer class.
+        optimizer_kwargs (dict): kwargs to pass to optimizer upon construction.
+        meta_optimizer_kwargs (dict): kwargs to pass to meta optimizer upon construction.
+        criterion (func): loss criterion to use.
+    """
+
+    def __init__(self, model, optimizer_cls, meta_optimizer_cls, optimizer_kwargs,
+                 meta_optimizer_kwargs, criterion):
+        self.criterion = criterion
+        self.model = model
+
+        self.optimizer_cls = maml.SGD if optimizer_cls.lower() == 'sgd' else maml.Adam
+
+        self.meta = maml.MAML(optimizer_cls=self.optimizer_cls,
+                              model=model, tensor=False, **optimizer_kwargs)
+
+        self.meta_optimizer_cls = optim.SGD if meta_optimizer_cls.lower() == 'sgd' else optim.Adam
+
+        self.optimizer_kwargs = optimizer_kwargs
+        self.meta_optimizer = self.meta_optimizer_cls(self.meta.parameters(), **meta_optimizer_kwargs)
+
+    def __call__(self, meta_batch, meta_train):
+        tasks = []
+        for t in meta_batch:
+            t.dataset.train()
+            inner = [b for b in t]
+            t.dataset.eval()
+            outer = [b for b in t]
+            tasks.append((inner, outer))
+        return self.run_meta_batch(tasks, meta_train=meta_train)
+
+    def run_meta_batch(self, meta_batch, meta_train):
+        """Run on meta-batch.
+        Arguments:
+            meta_batch (list): list of task-specific dataloaders
+            meta_train (bool): meta-train on batch.
+        """
+        loss, results = self.meta(meta_batch, return_predictions=False, return_results=True, create_graph=meta_train)
+        if meta_train:
+            loss.backward()
+            self.meta_optimizer.step()
+            self.meta_optimizer.zero_grad()
+
+        return results
