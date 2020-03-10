@@ -52,7 +52,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "type": "bucket",
         "batch_size": 16,
         "sorting_keys": [["words", "roberta___mask"]],
-        "instances_per_epoch": 24000,
+        "instances_per_epoch": 160000,
     },
     // "validation_iterator": {
     //     "type": "bucket",
