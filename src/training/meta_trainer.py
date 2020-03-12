@@ -26,9 +26,10 @@ from allennlp.training.metric_tracker import MetricTracker
 from allennlp.training.momentum_schedulers import MomentumScheduler
 from allennlp.training.moving_average import MovingAverage
 from allennlp.training.optimizers import Optimizer
-from src.training.wandb_writer import WandBWriter
 from allennlp.training.trainer_base import TrainerBase
 
+from src.training.wandb_writer import WandBWriter
+from src.training.tensorboard_writer import TensorboardWriter
 from src.training.wrapper import Wrapper
 from src.training.util import as_flat_dict, filter_state_dict
 
@@ -265,7 +266,17 @@ class MetaTrainer(TrainerBase):
         # `_enable_activation_logging`.
         self._batch_num_total = 0
 
-        self._writer = writer
+        if writer is not None:
+            self._writer = writer
+        else:
+            self._writer = TensorboardWriter(
+                    get_batch_num_total=lambda: self._batch_num_total,
+                    serialization_dir=serialization_dir,
+                    summary_interval=summary_interval,
+                    histogram_interval=histogram_interval,
+                    should_log_parameter_statistics=should_log_parameter_statistics,
+                    should_log_learning_rate=should_log_learning_rate)
+
 
         self._log_batch_size_period = log_batch_size_period
 
@@ -553,8 +564,10 @@ class MetaTrainer(TrainerBase):
                         break
 
             if self._master:
-                self._writer.log(train_metrics, step=self._batch_num_total, prefix="train_")
-                self._writer.log(val_metrics, step=self._batch_num_total, prefix="val_")
+                self._writer.log(train_metrics, step=self._batch_num_total,
+                                 epoch=epoch, prefix="train")
+                self._writer.log(val_metrics, step=self._batch_num_total,
+                                 epoch=epoch, prefix="val")
 
             # Create overall metrics dict
             training_elapsed_time = time.time() - training_start_time
@@ -817,6 +830,7 @@ class MetaTrainer(TrainerBase):
             optimizer,
             params.pop("wrapper"))
 
+        writer = None
         wandb_config = params.pop("wandb", None)
         if wandb_config is not None:
             writer = WandBWriter(config, wrapper.container, wandb_config)

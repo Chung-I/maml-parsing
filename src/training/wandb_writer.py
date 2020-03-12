@@ -47,5 +47,5 @@ class WandBWriter(FromParams):
     def log(self, metrics, step, epoch=None, prefix=""):
         log_dict = {'epoch': epoch} if epoch is not None else {}
         for k, v in metrics.items():
-            log_dict[(prefix + k)] = v
+            log_dict[f"{prefix}_{k}"] = v
         wandb.log(log_dict, step=step)
