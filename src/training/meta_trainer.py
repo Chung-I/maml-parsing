@@ -815,8 +815,7 @@ class MetaTrainer(TrainerBase):
         wrapper = Wrapper.from_params(
             model,
             optimizer,
-            params.pop("wrapper"),
-            cuda_device)
+            params.pop("wrapper"))
 
         wandb_config = params.pop("wandb", None)
         if wandb_config is not None:

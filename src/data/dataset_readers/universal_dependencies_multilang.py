@@ -103,7 +103,6 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         is_first_pass_for_vocab: bool = True,
         instances_per_file: int = 32,
         read_dependencies: bool = True,
-        lazy: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
