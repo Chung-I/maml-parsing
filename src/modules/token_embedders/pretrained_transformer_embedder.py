@@ -145,11 +145,11 @@ class TransformerEmbedder(TokenEmbedder):
         # Shape: [batch_size, num_wordpieces, embedding_size],
         # or if self._max_length is not None:
         # [batch_size * num_segments, self._max_length, embedding_size]
-        layers = self.transformer_model(
+        layer_outputs = self.transformer_model(
             input_ids=token_ids, token_type_ids=type_ids, attention_mask=transformer_mask
         )[-1][1:]
         if self._scalar_mix is not None:
-            embeddings = self._scalar_mix(layers, transformer_mask)
+            embeddings = self._scalar_mix(layer_outputs, transformer_mask)
         elif self.combine_layers == "last":
             embeddings = layers[-1]
         else:

@@ -43,11 +43,13 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "type": "bucket",
         "batch_size": BS,
         "sorting_keys": [["words", "roberta___mask"]],
+        "maximum_samples_per_batch": ["roberta___mask", BS * MAX_LEN],
     },
     "validation_iterator": {
         "type": "bucket",
-        "sorting_keys": [["words", "roberta___mask"]],
         "batch_size": BS,
+        "sorting_keys": [["words", "roberta___mask"]],
+        "maximum_samples_per_batch": ["roberta___mask", BS * MAX_LEN],
     },
     "model": {
       "type": "from_archive",
@@ -71,7 +73,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
           "num_epochs": NUM_EPOCHS,
           "num_steps_per_epoch": 1000, // dummy value, modified in the code
         },
-        "patience": 15,
+        "patience": 10,
         "grad_norm": 5.0,
         "validation_metric": "+LAS_AVG",
         "num_serialized_models_to_keep": 1,

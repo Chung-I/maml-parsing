@@ -553,10 +553,12 @@ class Trainer(TrainerBase):
                         break
 
             if self._master:
-                self._writer.log({k: v for k, v in train_metrics.items() if 'AVG' not in k},
-                                 step=self._batch_num_total, prefix="train_")
-                self._writer.log({k: v for k, v in val_metrics.items() if 'AVG' not in k},
-                                 step=self._batch_num_total, prefix="val_")
+                self._writer.log({k: v for k, v in train_metrics.items()
+                                  if 'AVG' not in k},
+                                 step=self._batch_num_total, epoch=epoch, prefix="train_")
+                self._writer.log({k: v for k, v in val_metrics.items()
+                                  if 'AVG' not in k},
+                                 step=self._batch_num_total, epoch=epoch, prefix="val_")
 
             # Create overall metrics dict
             training_elapsed_time = time.time() - training_start_time

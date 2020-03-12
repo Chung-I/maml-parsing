@@ -275,9 +275,22 @@ class BiaffineDependencyParser(Model):
             "tag_loss": tag_nll,
             "loss": loss,
             "mask": mask,
-            "words": [meta["words"] for meta in metadata],
-            "pos": [meta["pos"] for meta in metadata],
         }
+
+        self._add_metadata_to_output_dict(metadata, output_dict)
+
+        return output_dict
+
+    def _add_metadata_to_output_dict(self, metadata, output_dict):
+        if metadata is not None:
+            output_dict["words"] = [x["words"] for x in metadata]
+            output_dict["upos"] = [x["upos"] for x in metadata]
+            output_dict["xpos"] = [x["xpos"] for x in metadata]
+            output_dict["feats"] = [x["feats"] for x in metadata]
+            output_dict["lemmas"] = [x["lemmas"] for x in metadata]
+            output_dict["ids"] = [x["ids"] for x in metadata if "ids" in x]
+            output_dict["multiword_ids"] = [x["multiword_ids"] for x in metadata if "multiword_ids" in x]
+            output_dict["multiword_forms"] = [x["multiword_forms"] for x in metadata if "multiword_forms" in x]
 
         return output_dict
 
