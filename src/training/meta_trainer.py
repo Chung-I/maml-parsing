@@ -4,6 +4,7 @@ import datetime
 import os
 import time
 import traceback
+from collections import defaultdict
 from typing import Dict, Optional, Tuple, Union, Iterable, Any
 
 import torch
@@ -26,9 +27,10 @@ from allennlp.training.metric_tracker import MetricTracker
 from allennlp.training.momentum_schedulers import MomentumScheduler
 from allennlp.training.moving_average import MovingAverage
 from allennlp.training.optimizers import Optimizer
-from src.training.wandb_writer import WandBWriter
 from allennlp.training.trainer_base import TrainerBase
 
+from src.training.wandb_writer import WandBWriter
+from src.training.tensorboard_writer import TensorboardWriter
 from src.training.wrapper import Wrapper
 from src.training.util import as_flat_dict, filter_state_dict
 
@@ -265,7 +267,17 @@ class MetaTrainer(TrainerBase):
         # `_enable_activation_logging`.
         self._batch_num_total = 0
 
-        self._writer = writer
+        if writer is not None:
+            self._writer = writer
+        else:
+            self._writer = TensorboardWriter(
+                    get_batch_num_total=lambda: self._batch_num_total,
+                    serialization_dir=serialization_dir,
+                    summary_interval=summary_interval,
+                    histogram_interval=histogram_interval,
+                    should_log_parameter_statistics=should_log_parameter_statistics,
+                    should_log_learning_rate=should_log_learning_rate)
+
 
         self._log_batch_size_period = log_batch_size_period
 
@@ -289,6 +301,25 @@ class MetaTrainer(TrainerBase):
 
         self._tasks_per_step = tasks_per_step if tasks_per_step > 0 else len(self.train_datas.items())
         self.wrapper = wrapper
+
+        def update_hook(norms):
+            total_task_grad_norm = 0.0
+            total_summed_grad_norm = 0.0
+            for name, norm_list in norms.items():
+                avg_task_grad_norm = (sum(norm_list[:-1]) / len(norm_list[:-1]))
+                total_task_grad_norm += avg_task_grad_norm
+                summed_grad_norm = norm_list[-1]
+                total_summed_grad_norm += summed_grad_norm
+                ratio = summed_grad_norm / (avg_task_grad_norm + 1e-10)
+                # self._writer.log({f"avg_task_grad_norm_{name}": avg_task_grad_norm,
+                #                   f"summed_grad_norm_{name}": summed_grad_norm,
+                #                   f"task-total_norm_ratio_{name}": ratio},
+                #                  step=self._batch_num_total)
+            avg_ratio = total_summed_grad_norm / total_task_grad_norm
+            self._writer.log({"avg_task-total_norm_ratio": avg_ratio},
+                             step=self._batch_num_total)
+
+        self.wrapper.update_hook = update_hook
 
     def rescale_gradients(self) -> Optional[float]:
         return training_util.rescale_gradients(self.model, self._grad_norm)
@@ -553,8 +584,10 @@ class MetaTrainer(TrainerBase):
                         break
 
             if self._master:
-                self._writer.log(train_metrics, step=self._batch_num_total, prefix="train_")
-                self._writer.log(val_metrics, step=self._batch_num_total, prefix="val_")
+                self._writer.log(train_metrics, step=self._batch_num_total,
+                                 epoch=epoch, prefix="train")
+                self._writer.log(val_metrics, step=self._batch_num_total,
+                                 epoch=epoch, prefix="val")
 
             # Create overall metrics dict
             training_elapsed_time = time.time() - training_start_time
@@ -800,6 +833,7 @@ class MetaTrainer(TrainerBase):
                 keep_serialized_model_every_num_seconds=keep_serialized_model_every_num_seconds,
             )
 
+        save_embedder = params.pop_bool("save_embedder", True)
         model_save_interval = params.pop_float("model_save_interval", None)
         summary_interval = params.pop_int("summary_interval", 100)
         histogram_interval = params.pop_int("histogram_interval", None)
@@ -815,9 +849,9 @@ class MetaTrainer(TrainerBase):
         wrapper = Wrapper.from_params(
             model,
             optimizer,
-            params.pop("wrapper"),
-            cuda_device)
+            params.pop("wrapper"))
 
+        writer = None
         wandb_config = params.pop("wandb", None)
         if wandb_config is not None:
             writer = WandBWriter(config, wrapper.container, wandb_config)
@@ -835,6 +869,7 @@ class MetaTrainer(TrainerBase):
             shuffle=shuffle,
             num_epochs=num_epochs,
             serialization_dir=serialization_dir,
+            save_embedder=save_embedder,
             cuda_device=cuda_device,
             grad_norm=grad_norm,
             grad_clipping=grad_clipping,

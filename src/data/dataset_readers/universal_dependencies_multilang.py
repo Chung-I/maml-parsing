@@ -8,6 +8,7 @@ import numpy as np
 
 from overrides import overrides
 from conllu import parse_incr
+from src.data.dataset_readers.parser import parse_line, DEFAULT_FIELDS
 
 from allennlp.common.checks import ConfigurationError
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
@@ -17,6 +18,15 @@ from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
 
 logger = logging.getLogger(__name__)
+
+
+def lazy_parse(text: str, fields: Tuple[str, ...]=DEFAULT_FIELDS):
+    for sentence in text.split("\n\n"):
+        if sentence:
+            # TODO: upgrade conllu library
+            yield [parse_line(line, fields)
+                   for line in sentence.split("\n")
+                   if line and not line.strip().startswith("#")]
 
 
 def get_file_paths(pathname: str, languages: List[str]):
@@ -47,6 +57,7 @@ def get_file_paths(pathname: str, languages: List[str]):
         raise ConfigurationError("No dataset files to read")
 
     return paths
+
 
 
 @DatasetReader.register("ud_multilang")
@@ -91,6 +102,7 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         alternate: bool = True,
         is_first_pass_for_vocab: bool = True,
         instances_per_file: int = 32,
+        read_dependencies: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -106,6 +118,7 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
 
         self._is_first_pass = True
         self._iterators: List[Tuple[str, Iterator[Any]]] = None
+        self.read_dependencies = read_dependencies
 
     def _read_one_file(self, lang: str, file_path: str):
         with open(file_path, "r") as conllu_file:
@@ -113,34 +126,38 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
                 "Reading UD instances for %s language from conllu dataset at: %s", lang, file_path
             )
 
-            for annotation in parse_incr(conllu_file):
+            for annotation in lazy_parse(conllu_file.read()):
                 # CoNLLU annotations sometimes add back in words that have been elided
                 # in the original sentence; we remove these, as we're just predicting
                 # dependencies for the original sentence.
-                # We filter by integers here as elided words have a non-integer word id,
-                # as parsed by the conllu python library.
-
-                annotation = [x for x in annotation if isinstance(x["id"], int)]
-
+                # We filter by None here as elided words have a non-integer word id,
+                # and are replaced with None by the conllu python library.
+                multiword_tokens = [x for x in annotation if x["multi_id"] is not None]
+                annotation = [x for x in annotation if x["id"] is not None]
+    
                 if len(annotation) == 0:
                     continue
-
+    
                 def get_field(tag: str, map_fn: Callable[[Any], Any] = None) -> List[Any]:
                     map_fn = map_fn if map_fn is not None else lambda x: x
                     return [map_fn(x[tag]) if x[tag] is not None else "_" for x in annotation if tag in x]
-
-                heads = [x["head"] for x in annotation]
-                tags = [x["deprel"] for x in annotation]
-                words = [x["form"] for x in annotation]
-                if self._use_language_specific_pos:
-                    pos_tags = [x["xpostag"] for x in annotation]
-                else:
-                    pos_tags = [x["upostag"] for x in annotation]
-                lemmas = [x["lemma"] for x in annotation]
+    
+                # Extract multiword token rows (not used for prediction, purely for evaluation)
+                ids = [x["id"] for x in annotation]
+                multiword_ids = [x["multi_id"] for x in multiword_tokens]
+                multiword_forms = [x["form"] for x in multiword_tokens]
+    
+                words = get_field("form")
+                lemmas = get_field("lemma")
+                upos_tags = get_field("upostag")
+                xpos_tags = get_field("xpostag")
                 feats = get_field("feats", lambda x: "|".join(k + "=" + v for k, v in x.items())
                                                      if hasattr(x, "items") else "_")
-                yield self.text_to_instance(lang, words, pos_tags, list(zip(tags, heads)),
-                                            lemmas, feats)
+                heads = get_field("head")
+                dep_rels = get_field("deprel")
+                dependencies = list(zip(dep_rels, heads)) if self.read_dependencies else None
+                yield self.text_to_instance(lang, words, lemmas, upos_tags, xpos_tags,
+                                            feats, dependencies, ids, multiword_ids, multiword_forms)
 
     @overrides
     def _read(self, file_path: str):
@@ -173,15 +190,17 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
                         yield lang_iter.__next__()
 
     @overrides
-    def text_to_instance(
-        self,  # type: ignore
-        lang: str,
-        words: List[str],
-        upos_tags: List[str],
-        dependencies: List[Tuple[str, int]] = None,
-        lemmas: List[str] = None,
-        feats: List[str] = None,
-    ) -> Instance:
+    def text_to_instance(self,  # type: ignore
+                         lang: str,
+                         words: List[str],
+                         lemmas: List[str] = None,
+                         upos_tags: List[str] = None,
+                         xpos_tags: List[str] = None,
+                         feats: List[str] = None,
+                         dependencies: List[Tuple[str, int]] = None,
+                         ids: List[str] = None,
+                         multiword_ids: List[str] = None,
+                         multiword_forms: List[str] = None) -> Instance:
 
         """
         # Parameters
@@ -207,18 +226,27 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         tokens = TextField([Token(w) for w in words], self._token_indexers)
         fields["words"] = tokens
         fields["pos_tags"] = SequenceLabelField(upos_tags, tokens, label_namespace="pos")
+
         if dependencies is not None:
             # We don't want to expand the label namespace with an additional dummy token, so we'll
             # always give the 'ROOT_HEAD' token a label of 'root'.
-            fields["head_tags"] = SequenceLabelField(
-                [x[0] for x in dependencies], tokens, label_namespace="head_tags"
-            )
-            fields["head_indices"] = SequenceLabelField(
-                [int(x[1]) for x in dependencies], tokens, label_namespace="head_index_tags"
-            )
-        if self._use_lemma and lemmas is not None:
-            fields["lemmas"] = TextField([Token(lemma) for lemma in lemmas], self._token_indexers)
-        if self._use_ufeat and feats is not None:
-            fields["feats"] = SequenceLabelField(feats, tokens, label_namespace="feats")
-        fields["metadata"] = MetadataField({"words": words, "pos": upos_tags, "lang": lang})
+            fields["head_tags"] = SequenceLabelField([x[0] for x in dependencies],
+                                                     tokens,
+                                                     label_namespace="head_tags")
+            fields["head_indices"] = SequenceLabelField([int(x[1]) for x in dependencies],
+                                                        tokens,
+                                                        label_namespace="head_index_tags")
+
+        fields["metadata"] = MetadataField({
+            "words": words,
+            "upos": upos_tags,
+            "xpos": xpos_tags,
+            "feats": feats,
+            "lemmas": lemmas,
+            "ids": ids,
+            "multiword_ids": multiword_ids,
+            "multiword_forms": multiword_forms,
+            "lang": lang,
+        })
+
         return Instance(fields)

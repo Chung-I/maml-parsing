@@ -146,6 +146,7 @@ class BiaffineDependencyParserMultiLang(BiaffineDependencyParser):
             if entry["lang"] != batch_lang:
                 raise ConfigurationError("Two languages in the same batch.")
 
+        # print([inst["words"] for inst in metadata])
         mask = get_text_field_mask(words)
         self._apply_token_dropout(words)
         embedded_text_input = self.text_field_embedder(words, lang=batch_lang)
@@ -184,9 +185,9 @@ class BiaffineDependencyParserMultiLang(BiaffineDependencyParser):
             "tag_loss": tag_nll,
             "loss": loss,
             "mask": mask,
-            "words": [meta["words"] for meta in metadata],
-            "pos": [meta["pos"] for meta in metadata],
         }
+
+        self._add_metadata_to_output_dict(metadata, output_dict)
 
         return output_dict
 

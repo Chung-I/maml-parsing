@@ -26,13 +26,22 @@ class PretrainedAutoModel:
     _cache: Dict[str, AutoModel] = {}
 
     @classmethod
-    def load(cls, model_name: str, cache_model: bool = True) -> AutoModel:
+    def load(cls, model_name: str, tokenizer_name: str, cache_model: bool = True) -> AutoModel:
         if model_name in cls._cache:
             return PretrainedAutoModel._cache[model_name]
 
-        config = AutoConfig.from_pretrained(model_name,
+        pretrained_config = AutoConfig.from_pretrained(tokenizer_name,
+                                                       output_hidden_states=True)
+        if model_name.startswith("scratch"):
+            from transformers import XLMRobertaModel, XLMRobertaConfig
+            _, num_layers = model_name.split("-")
+            model_config = XLMRobertaConfig(num_hidden_layers=int(num_layers),
+                                            vocab_size=pretrained_config.vocab_size,
                                             output_hidden_states=True)
-        model = AutoModel.from_pretrained(model_name, config=config)
+            model = XLMRobertaModel(config=model_config)
+        else:
+            model = AutoModel.from_pretrained(model_name, config=pretrained_config)
+
         if cache_model:
             cls._cache[model_name] = model
 
@@ -63,7 +72,10 @@ class TransformerEmbedder(TokenEmbedder):
                  dropout: float = 0.0,
                  combine_layers: str = "mix") -> None:
         super().__init__()
-        self.transformer_model = PretrainedAutoModel.load(model_name)
+        placeholder = model_name.split("_")
+        model_name = placeholder[0]
+        tokenizer_name = placeholder[-1]
+        self.transformer_model = PretrainedAutoModel.load(model_name, tokenizer_name)
         self._max_length = max_length
         # I'm not sure if this works for all models; open an issue on github if you find a case
         # where it doesn't work.
@@ -81,7 +93,7 @@ class TransformerEmbedder(TokenEmbedder):
 
         self.set_dropout(dropout)
 
-        tokenizer = PretrainedAutoTokenizer.load(model_name)
+        tokenizer = PretrainedAutoTokenizer.load(tokenizer_name)
         (
             self._num_added_start_tokens,
             self._num_added_end_tokens,
@@ -145,11 +157,11 @@ class TransformerEmbedder(TokenEmbedder):
         # Shape: [batch_size, num_wordpieces, embedding_size],
         # or if self._max_length is not None:
         # [batch_size * num_segments, self._max_length, embedding_size]
-        layers = self.transformer_model(
+        layer_outputs = self.transformer_model(
             input_ids=token_ids, token_type_ids=type_ids, attention_mask=transformer_mask
         )[-1][1:]
         if self._scalar_mix is not None:
-            embeddings = self._scalar_mix(layers, transformer_mask)
+            embeddings = self._scalar_mix(layer_outputs, transformer_mask)
         elif self.combine_layers == "last":
             embeddings = layers[-1]
         else:

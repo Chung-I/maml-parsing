@@ -77,7 +77,7 @@ class ScalarMixWithDropout(torch.nn.Module):
 
         weights = torch.cat([parameter for parameter in self.scalar_parameters])
 
-        if self.dropout:
+        if self.dropout and self.training:
             weights = torch.where(self.dropout_mask.uniform_() > self.dropout, weights, self.dropout_fill)
 
         normed_weights = torch.nn.functional.softmax(weights, dim=0)

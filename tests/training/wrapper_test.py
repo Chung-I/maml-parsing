@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from copy import deepcopy
 
 from unittest import TestCase
 from src.training.wrapper import Wrapper, BaseWrapper, MultiWrapper, ReptileWrapper, FOMAMLWrapper
@@ -98,3 +99,35 @@ class FOMAMLWrapperTest(TestCase):
         np.testing.assert_array_almost_equal(loss, 0.00076864)
         np.testing.assert_array_almost_equal(self.wrapper.model.linear.weight.grad, expected_grad)
         np.testing.assert_array_almost_equal(self.wrapper.model.linear.weight.data, expected_weight)
+
+class WrapperEquivalenceTest(TestCase):
+    def setUp(self):
+        linear = nn.Linear(2, 2, bias=False)
+        self.fomaml_model = BaseModel(linear)
+        self.fomaml_model.linear.weight = nn.Parameter(torch.Tensor([[0.1, 0.7],[0.2, -3.45]]))
+        self.multi_model = deepcopy(self.fomaml_model)
+        self.fomaml_optimizer = torch.optim.Adam(self.fomaml_model.parameters(), lr=1.0)
+        self.multi_optimizer = torch.optim.Adam(self.multi_model.parameters(), lr=1.0)
+        optimizer_cls = 'Adam'
+        optimizer_kwargs = {'lr': 1.0}
+        self.tasks = [
+            [{"inputs": torch.tensor([-0.1, 0.1], requires_grad=True)}],
+            [{"inputs": torch.tensor([0.2, -0.1], requires_grad=True)}],
+        ]
+        self.cuda_device = -1
+        self.fomaml_wrapper = FOMAMLWrapper(self.fomaml_model, self.fomaml_optimizer,
+                                            optimizer_cls, optimizer_kwargs)
+        self.multi_wrapper = MultiWrapper(self.multi_model, self.multi_optimizer)
+
+    def test_outer_loop(self):
+        for i in range(5):
+            self.fomaml_wrapper.meta_optimizer.zero_grad()
+            self.multi_wrapper.optimizer.zero_grad()
+            loss = self.fomaml_wrapper(self.tasks)
+            loss = self.multi_wrapper(self.tasks)
+            self.fomaml_wrapper.meta_optimizer.step()
+            self.multi_wrapper.optimizer.step()
+        np.testing.assert_array_almost_equal(self.fomaml_wrapper.model.linear.weight.grad,
+                                             self.multi_wrapper.model.linear.weight.grad)
+        np.testing.assert_array_almost_equal(self.fomaml_wrapper.model.linear.weight.data,
+                                             self.multi_wrapper.model.linear.weight.data)

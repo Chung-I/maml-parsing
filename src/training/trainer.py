@@ -29,6 +29,7 @@ from allennlp.training.optimizers import Optimizer
 from allennlp.training.trainer_base import TrainerBase
 
 from src.training.wandb_writer import WandBWriter
+from src.training.tensorboard_writer import TensorboardWriter
 from src.training.util import as_flat_dict, filter_state_dict
 
 logger = logging.getLogger(__name__)
@@ -260,7 +261,16 @@ class Trainer(TrainerBase):
         # `_enable_activation_logging`.
         self._batch_num_total = 0
 
-        self._writer = writer
+        if writer is not None:
+            self._writer = writer
+        else:
+            self._writer = TensorboardWriter(
+                    get_batch_num_total=lambda: self._batch_num_total,
+                    serialization_dir=serialization_dir,
+                    summary_interval=summary_interval,
+                    histogram_interval=histogram_interval,
+                    should_log_parameter_statistics=should_log_parameter_statistics,
+                    should_log_learning_rate=should_log_learning_rate)
 
         self._log_batch_size_period = log_batch_size_period
 
@@ -553,10 +563,12 @@ class Trainer(TrainerBase):
                         break
 
             if self._master:
-                self._writer.log({k: v for k, v in train_metrics.items() if 'AVG' not in k},
-                                 step=self._batch_num_total, prefix="train_")
-                self._writer.log({k: v for k, v in val_metrics.items() if 'AVG' not in k},
-                                 step=self._batch_num_total, prefix="val_")
+                self._writer.log({k: v for k, v in train_metrics.items()
+                                  if 'AVG' not in k},
+                                 step=self._batch_num_total, epoch=epoch, prefix="train")
+                self._writer.log({k: v for k, v in val_metrics.items()
+                                  if 'AVG' not in k},
+                                 step=self._batch_num_total, epoch=epoch, prefix="val")
 
             # Create overall metrics dict
             training_elapsed_time = time.time() - training_start_time
