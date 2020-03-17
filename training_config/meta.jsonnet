@@ -118,7 +118,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
             "type": "fomaml",
             "optimizer_cls": "Adam",
             "optimizer_kwargs": {
-                "lr": 3e-5
+                "lr": 3e-5,
             }
         },
         "wandb": {
