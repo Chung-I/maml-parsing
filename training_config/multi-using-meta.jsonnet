@@ -52,13 +52,13 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "type": "bucket",
         "batch_size": 16,
         "sorting_keys": [["words", "roberta___mask"]],
-        "instances_per_epoch": 24000,
+        "instances_per_epoch": 160000,
     },
     // "validation_iterator": {
     //     "type": "bucket",
     //     "sorting_keys": [["words", "roberta___mask"]],
-    //     "batch_size": 32,
-    //     "instances_per_epoch": 320,
+    //     "batch_size": 8,
+    //     "instances_per_epoch": 800,
     // },
     "model": {
         "type": "ud_biaffine_parser_multilang",
@@ -67,8 +67,12 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "word_dropout": 0.33,
         "input_dropout": 0.33,
         "encoder": {
-            "type": "pass_through",
-            "input_dim": 818,
+            "type": "lstm",
+            "bidirectional": true,
+            "dropout": 0.33,
+            "hidden_size": 200,
+            "input_size": 818,
+            "num_layers": 3
         },
         "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
@@ -81,7 +85,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
             "token_embedders": {
                 "roberta": {
                     "type": "transformer_pretrained_mismatched",
-                    "model_name": MODEL_NAME,
+                    "model_name": "xlm-roberta-base",
                     "requires_grad": true,
                     "max_length": MAX_LEN,
                     "layer_dropout": 0.1,
@@ -114,7 +118,11 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "num_gradient_accumulation_steps": 1,
         "tasks_per_step": 10,
         "wrapper": {
-            "type": "multi",
+            "type": "fomaml",
+            "optimizer_cls": "Adam",
+            "optimizer_kwargs": {
+                "lr": 3e-5
+            }
         },
         "wandb": {
             "name": std.extVar("RUN_NAME"),
