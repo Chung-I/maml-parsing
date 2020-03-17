@@ -50,7 +50,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 8,
+        "batch_size": 4,
         "sorting_keys": [["words", "roberta___mask"]],
         "instances_per_epoch": 160000,
     },
@@ -112,7 +112,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "patience": 10,
         "validation_metric": "+LAS_AVG",
         // "num_serialized_models_to_keep": 20,
-        "num_gradient_accumulation_steps": 2,
+        "num_gradient_accumulation_steps": 4,
         "tasks_per_step": 10,
         "wrapper": {
             "type": "fomaml",

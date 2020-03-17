@@ -350,7 +350,7 @@ class _FOWrapper(BaseWrapper):
                     self._updates[n] = p.clone().zero_()
 
         for n, p in self._container.state_dict(keep_vars=True).items():
-            if n not in self._updates:
+            if n not in self._updates or p.grad is None:
                 continue
 
             if self._all_grads is True:
