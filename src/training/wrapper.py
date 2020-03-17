@@ -2,8 +2,8 @@
 import random
 from copy import deepcopy
 from abc import abstractmethod
-from collections import OrderedDict
-from typing import Dict, Optional, Tuple, Union, Iterable, Any
+from collections import OrderedDict, defaultdict
+from typing import Dict, Optional, Tuple, Union, Iterable, Any, Callable
 
 import torch
 
@@ -127,6 +127,7 @@ class BaseWrapper(Wrapper):
         optimizer_kwargs: Dict[str, Any],
         grad_norm: Optional[float] = None,
         grad_clipping: Optional[float] = None,
+        update_hook: Callable = None,
     ):
         super(BaseWrapper, self).__init__()
         self.model = model
@@ -138,6 +139,15 @@ class BaseWrapper(Wrapper):
         training_util.enable_gradient_clipping(self.model, self._grad_clipping)
         self.optimizer_cls = getattr(torch.optim, optimizer_cls)
         self.optimizer_kwargs = optimizer_kwargs
+        self._update_hook = update_hook
+
+    @property
+    def update_hook(self):
+        return self._update_hook
+
+    @update_hook.setter
+    def update_hook(self, new_update_hook):
+        self._update_hook = new_update_hook
 
     def rescale_gradients(self) -> Optional[float]:
         return training_util.rescale_gradients(self._container, self._grad_norm)
@@ -249,6 +259,7 @@ class BaseWrapper(Wrapper):
         model: Model,
         meta_optimizer: torch.optim.Optimizer,
         params: Params,
+        update_hook: Callable = None,
     ) -> "Wrapper":
 
         grad_norm = params.pop_float("grad_norm", None)
@@ -264,7 +275,8 @@ class BaseWrapper(Wrapper):
             optimizer_cls,
             optimizer_kwargs,
             grad_norm=grad_norm,
-            grad_clipping=grad_clipping
+            grad_clipping=grad_clipping,
+            update_hook=update_hook,
         )
 
 
@@ -316,6 +328,7 @@ class _FOWrapper(BaseWrapper):
         super(_FOWrapper, self).__init__(*args, **kwargs)
         self._counter = 0
         self._updates = None
+        self._norms = defaultdict(list)
 
     def run_task(self, task, train, meta_train):
         if meta_train:
@@ -346,6 +359,8 @@ class _FOWrapper(BaseWrapper):
             else:
                 self._updates[n].add_(p.grad.data)
 
+            self._norms[n].append(p.grad.data.norm(2))
+
     def _final_meta_update(self):
         for n, p in self._updates.items():
             p.data.div_(self._counter)
@@ -353,17 +368,15 @@ class _FOWrapper(BaseWrapper):
         for n, p in self.model.state_dict(keep_vars=True).items():
             if n not in self._updates:
                 continue
+            p.grad = self._updates[n]
+            self._norms[n].append(p.grad.data.norm(2))
 
-            if self._all_grads:
-                #p.grad = p.data - self._updates[n].data
-                p.grad = self._updates[n]
-            else:
-                p.grad = self._updates[n]
+        if self._update_hook is not None:
+            self._update_hook(self._norms)
 
-        #self.meta_optimizer.step()
-        #self.meta_optimizer.zero_grad()
         self._counter = 0
         self._updates = None
+        self._norms = defaultdict(list)
 
 
 @Wrapper.register("reptile")

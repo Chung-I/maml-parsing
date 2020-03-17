@@ -4,6 +4,7 @@ import datetime
 import os
 import time
 import traceback
+from collections import defaultdict
 from typing import Dict, Optional, Tuple, Union, Iterable, Any
 
 import torch
@@ -300,6 +301,25 @@ class MetaTrainer(TrainerBase):
 
         self._tasks_per_step = tasks_per_step if tasks_per_step > 0 else len(self.train_datas.items())
         self.wrapper = wrapper
+
+        def update_hook(norms):
+            total_task_grad_norm = 0.0
+            total_summed_grad_norm = 0.0
+            for name, norm_list in norms.items():
+                avg_task_grad_norm = (sum(norm_list[:-1]) / len(norm_list[:-1]))
+                total_task_grad_norm += avg_task_grad_norm
+                summed_grad_norm = norm_list[-1]
+                total_summed_grad_norm += summed_grad_norm
+                ratio = summed_grad_norm / (avg_task_grad_norm + 1e-10)
+                # self._writer.log({f"avg_task_grad_norm_{name}": avg_task_grad_norm,
+                #                   f"summed_grad_norm_{name}": summed_grad_norm,
+                #                   f"task-total_norm_ratio_{name}": ratio},
+                #                  step=self._batch_num_total)
+            avg_ratio = total_summed_grad_norm / total_task_grad_norm
+            self._writer.log({"avg_task-total_norm_ratio": avg_ratio},
+                             step=self._batch_num_total)
+
+        self.wrapper.update_hook = update_hook
 
     def rescale_gradients(self) -> Optional[float]:
         return training_util.rescale_gradients(self.model, self._grad_norm)
@@ -813,6 +833,7 @@ class MetaTrainer(TrainerBase):
                 keep_serialized_model_every_num_seconds=keep_serialized_model_every_num_seconds,
             )
 
+        save_embedder = params.pop_bool("save_embedder", True)
         model_save_interval = params.pop_float("model_save_interval", None)
         summary_interval = params.pop_int("summary_interval", 100)
         histogram_interval = params.pop_int("histogram_interval", None)
@@ -848,6 +869,7 @@ class MetaTrainer(TrainerBase):
             shuffle=shuffle,
             num_epochs=num_epochs,
             serialization_dir=serialization_dir,
+            save_embedder=save_embedder,
             cuda_device=cuda_device,
             grad_norm=grad_norm,
             grad_clipping=grad_clipping,

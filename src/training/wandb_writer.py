@@ -44,8 +44,9 @@ class WandBWriter(FromParams):
         wandb.init(config=config, **wandb_config)
         wandb.watch(model, log=log)
 
-    def log(self, metrics, step, epoch=None, prefix=""):
+    def log(self, metrics, step, epoch=None, prefix=None):
         log_dict = {'epoch': epoch} if epoch is not None else {}
         for k, v in metrics.items():
-            log_dict[f"{prefix}_{k}"] = v
+            key = f"{prefix}_{k}" if prefix else k
+            log_dict[key] = v
         wandb.log(log_dict, step=step)
