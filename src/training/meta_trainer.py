@@ -22,7 +22,7 @@ from allennlp.models.model import Model
 from allennlp.nn import util as nn_util
 from allennlp.training import util as training_util
 from allennlp.training.checkpointer import Checkpointer
-from allennlp.training.learning_rate_schedulers import LearningRateScheduler
+from allennlp.training.learning_rate_schedulers import LearningRateScheduler, SlantedTriangular
 from allennlp.training.metric_tracker import MetricTracker
 from allennlp.training.momentum_schedulers import MomentumScheduler
 from allennlp.training.moving_average import MovingAverage
@@ -357,7 +357,7 @@ class MetaTrainer(TrainerBase):
         """
         Trains one epoch and returns metrics.
         """
-        logger.info("Epoch %d/%d", epoch, self._num_epochs - 1)
+        logger.info("Epoch %d/%d", epoch, self._num_epochs)
         peak_cpu_usage = peak_memory_mb()
         logger.info(f"Peak CPU memory usage MB: {peak_cpu_usage}")
         gpu_usage = []
@@ -381,6 +381,12 @@ class MetaTrainer(TrainerBase):
         ) for key, train_data in self.train_datas.items()]
         assert len(set(num_training_batches)) == 1, "num_training_batches doesn't agree"
         num_tasks = len(batch_group_generators) 
+
+        if isinstance(self._learning_rate_scheduler, SlantedTriangular):
+            old_num_steps_per_epoch = self._learning_rate_scheduler.num_steps_per_epoch
+            self._learning_rate_scheduler.num_steps_per_epoch = num_training_batches[0]
+            logger.info(f"modify num_steps_per_epoch of lr scheduler from"
+                        f"{old_num_steps_per_epoch} to {num_training_batches}")
 
         self._last_log = time.time()
         last_save_time = time.time()
@@ -436,6 +442,10 @@ class MetaTrainer(TrainerBase):
             if self._master:
                 description = training_util.description_from_metrics(metrics)
                 tqdm_bar.set_description(description, refresh=False)
+
+            # log learning rate.
+            self._writer.log({"lr": self.optimizer.param_groups[0]['lr']},
+                             step=self._batch_num_total)
 
             # Save model if needed.
             if (
@@ -550,7 +560,10 @@ class MetaTrainer(TrainerBase):
         for key, value in self._metric_tracker.best_epoch_metrics.items():
             metrics["best_validation_" + key] = value
 
-        for epoch in range(epoch_counter, self._num_epochs):
+        if self._master:
+            self._save_checkpoint(epoch_counter - 1)
+
+        for epoch in range(epoch_counter, self._num_epochs + 1):
             epoch_start_time = time.time()
             train_metrics = self._train_epoch(epoch)
 
@@ -639,10 +652,10 @@ class MetaTrainer(TrainerBase):
             epoch_elapsed_time = time.time() - epoch_start_time
             logger.info("Epoch duration: %s", datetime.timedelta(seconds=epoch_elapsed_time))
 
-            if epoch < self._num_epochs - 1:
+            if epoch < self._num_epochs:
                 training_elapsed_time = time.time() - training_start_time
                 estimated_time_remaining = training_elapsed_time * (
-                    (self._num_epochs - epoch_counter) / float(epoch - epoch_counter + 1) - 1
+                    (self._num_epochs + 1 - epoch_counter) / float(epoch - epoch_counter + 1) - 1
                 )
                 formatted_time = str(datetime.timedelta(seconds=int(estimated_time_remaining)))
                 logger.info("Estimated training time remaining: %s", formatted_time)
@@ -724,7 +737,7 @@ class MetaTrainer(TrainerBase):
 
         if not training_state:
             # No checkpoint to restore, start at 0
-            return 0
+            return 1
 
         missing_keys, _ = self.model.load_state_dict(model_state, strict=False)
         self.optimizer.load_state_dict(training_state["optimizer"])

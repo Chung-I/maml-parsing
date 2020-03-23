@@ -59,11 +59,12 @@ class TensorboardWriter(FromParams):
             val = value
         return val
 
-    def log(self, metrics, step, epoch=None, prefix='train'):
+    def log(self, metrics, step, epoch=None, prefix=""):
         add_scalar_func = self.add_train_scalar if prefix != 'val' else self.add_validation_scalar
         timestep = step if epoch is None else epoch
         for metric, value in metrics.items():
-            add_scalar_func(f"{prefix}_{metric}", value, timestep=epoch)
+            name = f"{prefix}_{metric}" if prefix else metric
+            add_scalar_func(name, value, timestep=timestep)
 
     def should_log_this_batch(self) -> bool:
         return self._get_batch_num_total() % self._summary_interval == 0
