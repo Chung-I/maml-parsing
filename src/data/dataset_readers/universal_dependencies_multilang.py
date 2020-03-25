@@ -9,10 +9,12 @@ import numpy as np
 from overrides import overrides
 from conllu import parse_incr
 from src.data.dataset_readers.parser import parse_line, DEFAULT_FIELDS
+from src.data.dataset_readers.util import generate_stack_inputs
 
 from allennlp.common.checks import ConfigurationError
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
 from allennlp.data.fields import Field, TextField, SequenceLabelField, MetadataField
+from allennlp.data.fields import IndexField, ListField
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
@@ -103,14 +105,19 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         is_first_pass_for_vocab: bool = True,
         instances_per_file: int = 32,
         read_dependencies: bool = True,
+        view: str = 'graph',
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        if view not in ["graph", "transition"]:
+            raise NotImplementedError
+
         self._languages = languages
         self._token_indexers = token_indexers or {"tokens": SingleIdTokenIndexer()}
         self._use_language_specific_pos = use_language_specific_pos
         self._use_lemma = use_lemma
         self._use_ufeat = use_ufeat
+        self._view = view
 
         self._is_first_pass_for_vocab = is_first_pass_for_vocab
         self._alternate = alternate
@@ -189,6 +196,51 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
                         self._iterators[ind] = (lang, lang_iter)
                         yield lang_iter.__next__()
 
+    def _text_to_graph_instance(self,
+                                tokens: TextField,
+                                dependencies: List[Tuple[str, int]] = None):
+        fields: Dict[str, Field] = {}
+
+        if dependencies is not None:
+            # We don't want to expand the label namespace with an additional dummy token, so we'll
+            # always give the 'ROOT_HEAD' token a label of 'root'.
+            fields["head_tags"] = SequenceLabelField([x[0] for x in dependencies],
+                                                     tokens,
+                                                     label_namespace="head_tags")
+            fields["head_indices"] = SequenceLabelField([int(x[1]) for x in dependencies],
+                                                        tokens,
+                                                        label_namespace="head_index_tags")
+        return fields
+
+    def _text_to_transition_instance(self,
+                                     tokens,
+                                     dependencies):
+
+        fields: Dict[str, Field] = {}
+        head_ids = [int(x[1]) for x in dependencies]
+        head_tags = [x[0] for x in dependencies]
+        stacked_head_ids, children, siblings, stacked_head_tags, _ = \
+            generate_stack_inputs([0] + head_ids, ['root'] + head_tags, 'inside_out')
+
+        fields["head_indices"] = SequenceLabelField(head_ids,
+                                                    tokens,
+                                                    label_namespace="head_index_tags")
+        fields["head_tags"] = SequenceLabelField(head_tags,
+                                                 tokens,
+                                                 label_namespace="head_tags")
+        stacked_head_indices = \
+            ListField([IndexField(idx, tokens) for idx in stacked_head_ids])
+        fields["stacked_head_indices"] = stacked_head_indices
+        fields["stacked_head_tags"] = SequenceLabelField(stacked_head_tags,
+                                                         stacked_head_indices,
+                                                         label_namespace="head_tags")
+        fields["children"] = \
+            ListField([IndexField(idx, tokens) for idx in children])
+        fields["siblings"] = \
+            ListField([IndexField(idx, tokens) for idx in siblings])
+
+        return fields
+
     @overrides
     def text_to_instance(self,  # type: ignore
                          lang: str,
@@ -221,21 +273,14 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         An instance containing words, upos tags, dependency head tags and head
         indices as fields. The language identifier is stored in the metadata.
         """
-        fields: Dict[str, Field] = {}
-
         tokens = TextField([Token(w) for w in words], self._token_indexers)
+        if self._view == "graph":
+            fields = self._text_to_graph_instance(tokens, dependencies)
+        elif self._view == "transition":
+            fields = self._text_to_transition_instance(tokens, dependencies)
+
         fields["words"] = tokens
         fields["pos_tags"] = SequenceLabelField(upos_tags, tokens, label_namespace="pos")
-
-        if dependencies is not None:
-            # We don't want to expand the label namespace with an additional dummy token, so we'll
-            # always give the 'ROOT_HEAD' token a label of 'root'.
-            fields["head_tags"] = SequenceLabelField([x[0] for x in dependencies],
-                                                     tokens,
-                                                     label_namespace="head_tags")
-            fields["head_indices"] = SequenceLabelField([int(x[1]) for x in dependencies],
-                                                        tokens,
-                                                        label_namespace="head_index_tags")
 
         fields["metadata"] = MetadataField({
             "words": words,

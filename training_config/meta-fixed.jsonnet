@@ -6,6 +6,9 @@
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
 local MODEL_NAME = "xlm-roberta-base";
+local NUM_EPOCHS = 10;
+local HIDDEN_SIZE = 400;
+
 local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
     "languages": [x],
@@ -68,16 +71,19 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "word_dropout": 0.33,
         "input_dropout": 0.33,
         "encoder": {
-            "type": "lstm",
+            "type": "stacked_bidirectional_lstm",
             "bidirectional": true,
             "dropout": 0.33,
-            "hidden_size": 200,
-            "input_size": 818,
-            "num_layers": 3
+            "hidden_size": HIDDEN_SIZE,
+            "input_size": 868,
+            "num_layers": 3,
+            "recurrent_dropout_probability": 0.33,
+            "layer_dropout_probability": 0.33,
+            "use_highway": false,
         },
         "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
-            "embedding_dim": 50,
+            "embedding_dim": 100,
             "vocab_namespace": "pos"
         },
         "tag_representation_dim": 100,
@@ -109,22 +115,28 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     "trainer": {
         "type": "meta",
         "cuda_device": 0,
-        "num_epochs": 40,
+        "num_epochs": NUM_EPOCHS,
         "optimizer": {
           "type": "adam",
-          "lr": 3e-5,
+          "lr": 3e-4,
+        },
+        "learning_rate_scheduler": {
+          "type": "noam",
+          "model_size": HIDDEN_SIZE,
+          "num_epochs": NUM_EPOCHS,
+          "warmup_steps": 1000,
         },
         "patience": 10,
         "validation_metric": "+LAS_AVG",
         "save_embedder": false,
-        // "num_serialized_models_to_keep": 20,
+        "num_serialized_models_to_keep": -1,
         "num_gradient_accumulation_steps": 4,
         "tasks_per_step": 10,
         "wrapper": {
             "type": "fomaml",
             "optimizer_cls": "Adam",
             "optimizer_kwargs": {
-                "lr": 3e-5
+                "lr": 3e-4
             }
         },
         // "wandb": {

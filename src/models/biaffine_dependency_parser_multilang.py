@@ -205,11 +205,11 @@ class BiaffineDependencyParserMultiLang(BiaffineDependencyParser):
                     metrics["{}_{}".format(key, lang)] = lang_metrics[key]
 
             # Include in the average only languages that should count for early stopping.
-            if lang in self._langs_for_early_stop:
-                all_uas.append(metrics["UAS_{}".format(lang)])
-                all_las.append(metrics["LAS_{}".format(lang)])
+            #if lang in self._langs_for_early_stop:
+            all_uas.append(metrics["UAS_{}".format(lang)])
+            all_las.append(metrics["LAS_{}".format(lang)])
 
-        if self._langs_for_early_stop:
-            metrics.update({"UAS_AVG": numpy.mean(all_uas), "LAS_AVG": numpy.mean(all_las)})
+        #if self._langs_for_early_stop:
+        metrics.update({"UAS_AVG": numpy.mean(all_uas), "LAS_AVG": numpy.mean(all_las)})
 
         return metrics
