@@ -73,8 +73,6 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "input_dropout": 0.33,
         "encoder": {
             "type": "stacked_bidirectional_lstm",
-            "bidirectional": true,
-            "dropout": 0.33,
             "hidden_size": HIDDEN_SIZE,
             "input_size": 868,
             "num_layers": 3,
@@ -124,7 +122,6 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "learning_rate_scheduler": {
           "type": "noam",
           "model_size": HIDDEN_SIZE,
-          "num_epochs": NUM_EPOCHS,
           "warmup_steps": 1000,
         },
         "patience": 10,
