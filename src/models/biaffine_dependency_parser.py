@@ -248,9 +248,11 @@ class BiaffineDependencyParser(Model):
         elif self._pos_tag_embedding is not None:
             raise ConfigurationError("Model uses a POS embedding, but no POS tags were passed.")
 
+        embedded_text_input = self._input_dropout(embedded_text_input)
+        encoded_text = self.encoder(embedded_text_input, mask)
 
         predicted_heads, predicted_head_tags, mask, arc_nll, tag_nll = self._parse(
-            embedded_text_input, mask, head_tags, head_indices
+            encoded_text, mask, head_tags, head_indices
         )
 
         loss = arc_nll + tag_nll
@@ -373,14 +375,11 @@ class BiaffineDependencyParser(Model):
 
     def _parse(
         self,
-        embedded_text_input: torch.Tensor,
+        encoded_text: torch.Tensor,
         mask: torch.LongTensor,
         head_tags: torch.LongTensor = None,
         head_indices: torch.LongTensor = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-
-        embedded_text_input = self._input_dropout(embedded_text_input)
-        encoded_text = self.encoder(embedded_text_input, mask)
 
         batch_size, _, encoding_dim = encoded_text.size()
 

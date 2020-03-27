@@ -5,7 +5,7 @@
 // To recompute alignemts for ELMo, refer to: https://github.com/TalSchuster/CrossLingualELMo
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
-local MODEL_NAME = "xlm-roberta-large";
+local MODEL_NAME = "xlm-roberta-base";
 local NUM_EPOCHS = std.parseInt(std.extVar("NUM_EPOCHS"));
 local BS = 4;
 local INSTANCES_PER_EPOCH = 8000;
@@ -40,7 +40,7 @@ local READERS(xs, alternate=true) = {
 };
 
 local UD_ROOT = std.extVar("UD_ROOT");
-local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
+local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
 
 {
     "dataset_readers": READERS(TRAIN_LANGS),
@@ -68,7 +68,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "input_dropout": 0.33,
         "encoder": {
             "type": "pass_through",
-            "input_dim": 1074,
+            "input_dim": 818,
         },
         "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
@@ -82,7 +82,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
                 "roberta": {
                     "type": "transformer_pretrained_mismatched",
                     "model_name": MODEL_NAME,
-                    "requires_grad": true,
+                    "requires_grad": false,
                     "max_length": MAX_LEN,
                     "layer_dropout": 0.1,
                     "dropout": 0.1,
@@ -103,7 +103,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
     },
     "trainer": {
         "type": "meta",
-        "cuda_device": 0,
+        "cuda_device": -1,
         "num_epochs": NUM_EPOCHS,
         "optimizer": {
           "type": "adam",
@@ -122,9 +122,9 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "-ud-" + split + ".conllu";
         "wrapper": {
             "type": "multi",
         },
-        "wandb": {
-            "name": std.extVar("RUN_NAME") + "_" + LANG,
-            "project": "allennlp-maml-parsing",
-        },
+        // "wandb": {
+        //     "name": std.extVar("RUN_NAME") + "_" + LANG,
+        //     "project": "allennlp-maml-parsing",
+        // },
     }
 }
