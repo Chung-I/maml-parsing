@@ -72,13 +72,12 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "word_dropout": 0.33,
         "input_dropout": 0.33,
         "encoder": {
-            "type": "stacked_bidirectional_lstm",
+            "type": "lstm",
             "hidden_size": HIDDEN_SIZE,
             "input_size": 868,
             "num_layers": 3,
-            "recurrent_dropout_probability": 0.33,
-            "layer_dropout_probability": 0.33,
-            "use_highway": false,
+            "dropout": 0.0,
+            "bidirectional": true,
         },
         "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
@@ -119,11 +118,11 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
           "type": "adam",
           "lr": 3e-4,
         },
-        "learning_rate_scheduler": {
-          "type": "noam",
-          "model_size": HIDDEN_SIZE,
-          "warmup_steps": 1000,
-        },
+        // "learning_rate_scheduler": {
+        //   "type": "noam",
+        //   "model_size": HIDDEN_SIZE,
+        //   "warmup_steps": 1000,
+        // },
         "patience": 10,
         "validation_metric": "+LAS_AVG",
         "save_embedder": false,
