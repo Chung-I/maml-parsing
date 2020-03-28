@@ -127,6 +127,7 @@ class BiaffineDependencyParserMultiLang(BiaffineDependencyParser):
         head_indices: torch.LongTensor = None,
         lemmas: TextFieldTensors = None,
         feats: TextFieldTensors = None,
+        langs: torch.LongTensor = None,
     ) -> Dict[str, torch.Tensor]:
 
         """
@@ -182,7 +183,7 @@ class BiaffineDependencyParserMultiLang(BiaffineDependencyParser):
             )
 
         output_dict = {
-            "encoded_text": encoded_text,
+            "hidden_state": encoded_text,
             "heads": predicted_heads,
             "head_tags": predicted_head_tags,
             "arc_loss": arc_nll,

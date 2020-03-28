@@ -8,6 +8,7 @@ local MAX_LEN = 512;
 local MODEL_NAME = "xlm-roberta-base";
 local NUM_EPOCHS = 10;
 local HIDDEN_SIZE = 400;
+local ADV_HIDDEN = 128;
 local BIDIR = true;
 local NUM_DIRS = if BIDIR then 2 else 1;
 
@@ -136,6 +137,29 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
             "optimizer_kwargs": {
                 "lr": 3e-4
             }
+        },
+        "task_discriminator": {
+          "encoder": {
+            "type": "lstm",
+            "input_size": HIDDEN_SIZE * NUM_DIRS,
+            "hidden_size": ADV_HIDDEN,
+            "bidirectional": true,
+            "num_layers": 1,
+            "dropout": 0.0,
+          },
+          // "projection": {
+          //   "input_dim": ADV_HIDDEN * 2,
+          //   "hidden_dims": 1,
+          //   "num_layers": 1,
+          //   "activations": "relu",
+          // },
+          "first_n_states": 4,
+        },
+        "discriminator_optimizer": {
+          "type": "sgd",
+          "lr": 0.01,
+          "nesterov": true,
+          "momentum": 0.9,
         },
         // "wandb": {
         //     "name": std.extVar("RUN_NAME"),

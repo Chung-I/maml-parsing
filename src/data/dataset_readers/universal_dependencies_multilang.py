@@ -14,7 +14,7 @@ from src.data.dataset_readers.util import generate_stack_inputs
 from allennlp.common.checks import ConfigurationError
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
 from allennlp.data.fields import Field, TextField, SequenceLabelField, MetadataField
-from allennlp.data.fields import IndexField, ListField
+from allennlp.data.fields import IndexField, ListField, LabelField
 from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
@@ -281,6 +281,7 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
 
         fields["words"] = tokens
         fields["pos_tags"] = SequenceLabelField(upos_tags, tokens, label_namespace="pos")
+        fields["langs"] = LabelField(lang, label_namespace="lang_labels")
 
         fields["metadata"] = MetadataField({
             "words": words,

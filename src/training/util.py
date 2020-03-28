@@ -8,6 +8,7 @@ import datetime
 import logging
 import os
 import shutil
+from functools import partial
 
 import torch
 
@@ -232,3 +233,17 @@ def move_to_device(obj, device: torch.device):
         return tuple(move_to_device(item, device) for item in obj)
     else:
         return obj
+
+def pad_batched_tensors(batched_tensors: List[torch.Tensor],
+                        length_dim: int = 1):
+    max_length = max(map(lambda x: x.size(length_dim), batched_tensors))
+    def pad_to_len(tensor, max_len):
+        new_shape = list(tensor.shape)
+        new_shape[length_dim] = max_len
+        new_tensor = tensor.new_zeros(new_shape)
+        slicing_shape = list(tensor.shape)
+        slices = tuple([slice(0, x) for x in slicing_shape])
+        new_tensor[slices] = tensor
+        return new_tensor
+
+    return torch.cat(list(map(partial(pad_to_len, max_len=max_length), batched_tensors)), dim=0)

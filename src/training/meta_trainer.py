@@ -32,6 +32,7 @@ from allennlp.training.trainer_base import TrainerBase
 from src.training.wandb_writer import WandBWriter
 from src.training.tensorboard_writer import TensorboardWriter
 from src.training.wrapper import Wrapper
+from src.training.adv import TaskDiscriminator
 from src.training.util import as_flat_dict, filter_state_dict
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,8 @@ class MetaTrainer(TrainerBase):
         num_gradient_accumulation_steps: int = 1,
         log_grad_norm: str = "total",
         wrapper: Optional[Wrapper] = None,
+        task_discriminator: Optional[TaskDiscriminator] = None,
+        discriminator_optimizer: Optional[torch.optim.Optimizer] = None,
         tasks_per_step: int = 0,
         writer: WandBWriter = None,
     ) -> None:
@@ -302,6 +305,8 @@ class MetaTrainer(TrainerBase):
 
         self._tasks_per_step = tasks_per_step if tasks_per_step > 0 else len(self.train_datas.items())
         self.wrapper = wrapper
+        self.task_D = task_discriminator
+        self.optim_D = discriminator_optimizer
 
         def update_hook(norms):
             assert log_grad_norm in ["none", 'total', 'var']
@@ -424,6 +429,32 @@ class MetaTrainer(TrainerBase):
                 self._momentum_scheduler.step_batch(batch_num_total)
 
             self.optimizer.step()
+
+            if self.task_D and self.optim_D:
+                # D training
+                if batch_num_total % self.task_D.steps_per_update == 1:
+                    self.optim_D.zero_grad()
+                    hidden_states, labels, masks = self.task_D.get_hidden_states(self.model, tasks)
+                    adv_loss = self.task_D(hidden_states, labels, masks, detach=True)
+                    adv_loss.backward()
+                    self.optim_D.step()
+                    self._writer.log({"D_loss": adv_loss.detach().item()},
+                                     step=self._batch_num_total)
+
+                # G training
+                self.optimizer.zero_grad()
+                hidden_states, labels, masks = self.task_D.get_hidden_states(self.model, tasks)
+                adv_loss = self.task_D(hidden_states, labels, masks)
+                if self.task_D.weight:
+                    alpha = self.task_D.weight
+                else:
+                    alpha = self.task_D.get_alpha(self._batch_num_total,
+                                                  num_training_batches[0] * self._num_epochs)
+                G_loss = -alpha * adv_loss
+                G_loss.backward()
+                self.optimizer.step()
+                self._writer.log({"G_loss": G_loss.detach().item(), "alpha": alpha},
+                                 step=self._batch_num_total)
 
             # Update moving averages
             if self._moving_average is not None:
@@ -872,6 +903,22 @@ class MetaTrainer(TrainerBase):
             optimizer,
             params.pop("wrapper"))
 
+        task_discriminator_params = params.pop("task_discriminator", None)
+        if task_discriminator_params:
+            num_langs = model.vocab.get_vocab_size("lang_labels")
+            task_discriminator = TaskDiscriminator.from_params(task_discriminator_params,
+                                                               num_langs=num_langs)
+            if cuda_device >= 0:
+                task_discriminator = task_discriminator.cuda(cuda_device)
+
+            discriminator_parameters = \
+                [[n, p] for n, p in task_discriminator.named_parameters() if p.requires_grad]
+            discriminator_optimizer = Optimizer.from_params(discriminator_parameters,
+                                                            params.pop("discriminator_optimizer"))
+        else:
+            task_discriminator = None
+            discriminator_optimizer = None
+
         writer = None
         wandb_config = params.pop("wandb", None)
         if wandb_config is not None:
@@ -910,6 +957,8 @@ class MetaTrainer(TrainerBase):
             num_gradient_accumulation_steps=num_gradient_accumulation_steps,
             log_grad_norm=log_grad_norm,
             wrapper=wrapper,
+            task_discriminator=task_discriminator,
+            discriminator_optimizer=discriminator_optimizer,
             tasks_per_step=tasks_per_step,
             writer=writer,
         )
