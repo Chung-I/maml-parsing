@@ -32,9 +32,10 @@ local BASE_READER(x, alternate=true) = {
 //local LANGS = ["et", "fi", "de", "en", "hi", "ja", "fr", "it",
 //   "la", "bg", "sl", "eu", "zh"];
 
-// local TRAIN_LANGS = ['af_afribooms', 'grc_proiel', 'grc_perseus', 'ar_padt', 'hy_armtdp', 'eu_bdt', 'bg_btb', 'bxr_bdt', 'ca_ancora', 'zh_gsd', 'hr_set', 'cs_cac', 'cs_fictree', 'cs_pdt', 'da_ddt', 'nl_alpino', 'nl_lassysmall', 'en_ewt', 'en_gum', 'en_lines', 'et_edt', 'fi_ftb', 'fi_tdt', 'fr_gsd', 'fr_sequoia', 'fr_spoken', 'gl_ctg', 'gl_treegal', 'de_gsd', 'got_proiel', 'el_gdt', 'he_htb', 'hi_hdtb', 'hu_szeged', 'id_gsd', 'ga_idt', 'it_isdt', 'it_postwita', 'ja_gsd', 'kk_ktb', 'ko_gsd', 'ko_kaist', 'kmr_mg', 'la_ittb', 'la_proiel', 'la_perseus', 'lv_lvtb', 'sme_giella', 'no_bokmaal', 'no_nynorsk', 'no_nynorsklia', 'cu_proiel', 'fro_srcmf', 'fa_seraji', 'pl_lfg', 'pl_sz', 'pt_bosque', 'ro_rrt', 'ru_syntagrus', 'ru_taiga', 'sr_set', 'sk_snk', 'sl_ssj', 'sl_sst', 'es_ancora', 'sv_lines', 'sv_talbanken', 'tr_imst', 'uk_iu', 'hsb_ufal', 'ur_udtb', 'ug_udt', 'vi_vtb'];
-// local TRAIN_LANGS = ['af', 'grc', 'ar', 'hy', 'eu', 'bg', 'bxr', 'ca', 'zh', 'hr', 'cs', 'da', 'nl', 'en', 'et', 'fi', 'fr', 'gl', 'de', 'got', 'el', 'he', 'hi', 'hu', 'id', 'ga', 'it', 'ja', 'kk', 'ko', 'kmr', 'la', 'lv', 'sme', 'no', 'cu', 'fro', 'fa', 'pl', 'pt', 'ro', 'ru', 'sr', 'sk', 'sl', 'es', 'sv', 'tr', 'uk', 'hsb', 'ur', 'ug', 'vi'];
+local TRAIN_LANGS = ['af_afribooms', 'grc_proiel', 'grc_perseus', 'ar_padt', 'hy_armtdp', 'eu_bdt', 'bg_btb', 'bxr_bdt', 'ca_ancora', 'zh_gsd', 'hr_set', 'cs_cac', 'cs_fictree', 'cs_pdt', 'da_ddt', 'nl_alpino', 'nl_lassysmall', 'en_ewt', 'en_gum', 'en_lines', 'et_edt', 'fi_ftb', 'fi_tdt', 'fr_gsd', 'fr_sequoia', 'fr_spoken', 'gl_ctg', 'gl_treegal', 'de_gsd', 'got_proiel', 'el_gdt', 'he_htb', 'hi_hdtb', 'hu_szeged', 'id_gsd', 'ga_idt', 'it_isdt', 'it_postwita', 'ja_gsd', 'kk_ktb', 'ko_gsd', 'ko_kaist', 'kmr_mg', 'la_ittb', 'la_proiel', 'la_perseus', 'lv_lvtb', 'sme_giella', 'no_bokmaal', 'no_nynorsk', 'no_nynorsklia', 'cu_proiel', 'fro_srcmf', 'fa_seraji', 'pl_lfg', 'pl_sz', 'pt_bosque', 'ro_rrt', 'ru_syntagrus', 'ru_taiga', 'sr_set', 'sk_snk', 'sl_ssj', 'sl_sst', 'es_ancora', 'sv_lines', 'sv_talbanken', 'tr_imst', 'uk_iu', 'hsb_ufal', 'ur_udtb', 'ug_udt', 'vi_vtb'];
+
 local TRAIN_LANGS = ['af', 'grc', 'pt', 'sv', 'no', 'es', 'zh', 'fro', 'ja', 'tr', 'hi', 'ar', 'ca', 'hr', 'el', 'hu', 'la', 'fr', 'fi', 'eu', 'ko', 'et', 'id', 'fa', 'uk', 'got', 'pl', 'ug', 'vi', 'da', 'ru', 'gl', 'it', 'cu', 'cs', 'he', 'sr', 'en', 'sk', 'bg', 'sl', 'ur', 'nl', 'lv', 'de', 'ro'];
+
 // local DEV_LANGS = ['et_edt', 'ko_gsd', 'af_afribooms', 'hu_szeged', 'pl_sz', 'el_gdt', 'sk_snk', 'ja_gsd', 'sv_lines', 'grc_proiel', 'he_htb', 'fr_gsd', 'id_gsd', 'en_lines', 'no_bokmaal', 'la_ittb', 'fro_srcmf', 'cs_pdt', 'nl_alpino', 'fr_sequoia', 'fa_seraji', 'nl_lassysmall', 'fi_ftb', 'vi_vtb', 'ko_kaist', 'la_proiel', 'it_postwita', 'hr_set', 'cu_proiel', 'cs_fictree', 'sr_set', 'de_gsd', 'zh_gsd', 'da_ddt', 'fr_spoken', 'it_isdt', 'sv_talbanken', 'ro_rrt', 'es_ancora', 'eu_bdt', 'ar_padt', 'lv_lvtb', 'pl_lfg', 'sl_ssj', 'ug_udt', 'got_proiel', 'fi_tdt', 'ca_ancora', 'ru_syntagrus', 'pt_bosque', 'cs_cac', 'grc_perseus', 'bg_btb', 'uk_iu', 'ur_udtb', 'en_ewt', 'gl_ctg', 'no_nynorsk', 'hi_hdtb', 'en_gum', 'tr_imst'];
 local DEV_LANGS = TRAIN_LANGS;
 
@@ -57,7 +58,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 4,
+        "batch_size": 16,
         "sorting_keys": [["words", "roberta___mask"]],
         "instances_per_epoch": 160000,
     },
@@ -74,12 +75,13 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "word_dropout": 0.33,
         "input_dropout": 0.33,
         "encoder": {
-            "type": "lstm",
+            "type": "stacked_bidirectional_lstm",
             "hidden_size": HIDDEN_SIZE,
             "input_size": 868,
             "num_layers": 3,
-            "dropout": 0.0,
-            "bidirectional": BIDIR,
+            "recurrent_dropout_probability": 0.33,
+            "layer_dropout_probability": 0.33,
+            "use_highway": false,
         },
         "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
@@ -129,7 +131,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "validation_metric": "+LAS_AVG",
         "save_embedder": false,
         "num_serialized_models_to_keep": -1,
-        "num_gradient_accumulation_steps": 4,
+        "num_gradient_accumulation_steps": 1,
         "tasks_per_step": 10,
         "wrapper": {
             "type": "fomaml",
@@ -157,7 +159,6 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
           //   "activations": "relu",
           // },
           "first_n_states": 4,
-          "steps_per_update": 1,
         },
         "discriminator_optimizer": {
           "type": "sgd",

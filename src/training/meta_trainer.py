@@ -428,32 +428,31 @@ class MetaTrainer(TrainerBase):
             if self._momentum_scheduler:
                 self._momentum_scheduler.step_batch(batch_num_total)
 
-            self.optimizer.step()
-
             if self.task_D and self.optim_D:
                 # D training
-                if batch_num_total % self.task_D.steps_per_update == 1:
+                steps_per_update = self.task_D.steps_per_update
+                if (batch_num_total - 1) % steps_per_update == 0:
                     self.optim_D.zero_grad()
                     hidden_states, labels, masks = self.task_D.get_hidden_states(self.model, tasks)
-                    adv_loss = self.task_D(hidden_states, labels, masks, detach=True)
-                    adv_loss.backward()
+                    D_loss, _, acc = self.task_D(hidden_states, labels, masks, detach=True)
+                    D_loss.backward()
                     self.optim_D.step()
-                    self._writer.log({"D_loss": adv_loss.detach().item()},
+                    self._writer.log({"D_loss": D_loss.detach().item(),
+                                      "D_acc": acc},
                                      step=self._batch_num_total)
 
                 # G training
-                self.optimizer.zero_grad()
                 hidden_states, labels, masks = self.task_D.get_hidden_states(self.model, tasks)
-                adv_loss = self.task_D(hidden_states, labels, masks)
+                _, g_loss, acc = self.task_D(hidden_states, labels, masks)
                 if self.task_D.weight:
                     alpha = self.task_D.weight
                 else:
                     alpha = self.task_D.get_alpha(self._batch_num_total,
                                                   num_training_batches[0] * self._num_epochs)
-                G_loss = -alpha * adv_loss
+                G_loss = -alpha * g_loss
                 G_loss.backward()
                 self.optimizer.step()
-                self._writer.log({"G_loss": G_loss.detach().item(), "alpha": alpha},
+                self._writer.log({"G_loss": g_loss.detach().item(), "alpha": alpha, "G_acc": acc},
                                  step=self._batch_num_total)
 
             # Update moving averages
