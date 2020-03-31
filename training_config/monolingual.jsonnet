@@ -7,7 +7,9 @@
 local MAX_LEN = 512;
 local MODEL_NAME = "xlm-roberta-base";
 local NUM_EPOCHS = std.parseInt(std.extVar("NUM_EPOCHS"));
-local BS = 4;
+local WEIGHT_DROP = if std.extVar("WEIGHT_DROP") == "true" then 0.33 else 0.0;
+local HIDDEN_SIZE = 400;
+local BS = 16;
 local INSTANCES_PER_EPOCH = 8000;
 local STEPS_PER_EPOCH = INSTANCES_PER_EPOCH / BS;
 local BASE_READER(x, alternate=true) = {
@@ -72,7 +74,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         },
         "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
-            "embedding_dim": 50,
+            "embedding_dim": 100,
             "vocab_namespace": "pos"
         },
         "tag_representation_dim": 100,
@@ -107,16 +109,16 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "num_epochs": NUM_EPOCHS,
         "optimizer": {
           "type": "adam",
-          "lr": 1e-5,
+          "lr": 3e-4,
         },
         "learning_rate_scheduler": {
-          "type": "slanted_triangular",
-          "num_epochs": NUM_EPOCHS,
-          "num_steps_per_epoch": STEPS_PER_EPOCH,
+          "type": "noam",
+          "model_size": HIDDEN_SIZE,
+          "warmup_steps": 1000,
         },
         "patience": 10,
-        "grad_norm": 5.0,
         "validation_metric": "+LAS_AVG",
+        "save_embedder": false,
         "num_serialized_models_to_keep": 1,
         "num_gradient_accumulation_steps": 1,
         "wrapper": {
