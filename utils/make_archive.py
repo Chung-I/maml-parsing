@@ -47,3 +47,4 @@ else:
 weights = maybe_add_pretrained_embeddings(args.s, weights, args.n)
 
 archive_model(args.s, weights, archive_path)
+os.remove(os.path.join(args.s, weights))

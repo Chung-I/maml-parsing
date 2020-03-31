@@ -105,6 +105,7 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         is_first_pass_for_vocab: bool = True,
         instances_per_file: int = 32,
         read_dependencies: bool = True,
+        read_language: bool = True,
         view: str = 'graph',
         **kwargs,
     ) -> None:
@@ -125,7 +126,8 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
 
         self._is_first_pass = True
         self._iterators: List[Tuple[str, Iterator[Any]]] = None
-        self.read_dependencies = read_dependencies
+        self._read_dependencies = read_dependencies
+        self._read_language = read_language
 
     def _read_one_file(self, lang: str, file_path: str):
         with open(file_path, "r") as conllu_file:
@@ -162,7 +164,7 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
                                                      if hasattr(x, "items") else "_")
                 heads = get_field("head")
                 dep_rels = get_field("deprel")
-                dependencies = list(zip(dep_rels, heads)) if self.read_dependencies else None
+                dependencies = list(zip(dep_rels, heads)) if self._read_dependencies else None
                 yield self.text_to_instance(lang, words, lemmas, upos_tags, xpos_tags,
                                             feats, dependencies, ids, multiword_ids, multiword_forms)
 
@@ -281,7 +283,8 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
 
         fields["words"] = tokens
         fields["pos_tags"] = SequenceLabelField(upos_tags, tokens, label_namespace="pos")
-        fields["langs"] = LabelField(lang, label_namespace="lang_labels")
+        if self._read_language:
+            fields["langs"] = LabelField(lang, label_namespace="lang_labels")
 
         fields["metadata"] = MetadataField({
             "words": words,
