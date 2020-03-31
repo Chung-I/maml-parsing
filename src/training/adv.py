@@ -18,6 +18,7 @@ class TaskDiscriminator(nn.Module, FromParams):
                  first_n_states: int = 1,
                  weight: float = None,
                  steps_per_update: int = 5,
+                 target_distribution: str = 'uniform',
                  num_langs: int = 1):
         super().__init__()
         self.first_n_states = first_n_states
@@ -31,7 +32,14 @@ class TaskDiscriminator(nn.Module, FromParams):
             activations=Activation.by_name("relu")(),
         )
         self.log_softmax = torch.nn.LogSoftmax()
-        self._loss_func = torch.nn.NLLLoss(reduction='mean')
+        self._d_loss = torch.nn.NLLLoss(reduction='mean')
+        self._g_loss = None
+        if target_distribution == 'uniform':
+            kl_loss = torch.nn.KLDivLoss(reduction='batchmean')
+            self._g_loss = lambda inputs: kl_loss(
+                inputs,
+                inputs.new_ones(inputs.size()) / inputs.size(1)
+            )
 
     def get_hidden_states(self, generator, tasks):
         def get_hidden_states(task):
@@ -61,8 +69,13 @@ class TaskDiscriminator(nn.Module, FromParams):
             task_hidden_states = task_hidden_states.detach()
         task_representations = self._encoder(task_hidden_states, masks)
         task_logits = self.log_softmax(self._projection(task_representations))
-        loss = self._loss_func(task_logits, labels)
-        return loss
+        acc = (task_logits.max(dim=-1)[1] == labels).float().mean()
+        d_loss = self._d_loss(task_logits, labels)
+        if self._g_loss is not None:
+            g_loss = self._g_loss(task_logits)
+        else:
+            g_loss = -d_loss
+        return d_loss, g_loss, acc
 
     def get_alpha(self, batch_num, num_batches):
         p = float(batch_num) / num_batches
