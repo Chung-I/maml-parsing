@@ -22,6 +22,7 @@ local BASE_READER(x, alternate=true) = {
             "max_length": MAX_LEN,
         }
     },
+    "read_language": false,
     "use_language_specific_pos": false
 };
 
@@ -59,7 +60,6 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     // Set TRAIN_PATHNAME='std/**/*train.conll'
     "train_data_path": DATA_PATH(LANG, "train"),
     "validation_data_path": DATA_PATH(LANG, "dev"),
-    "test_data_path": DATA_PATH(LANG, "test"),
     "trainer": {
         "type": "wandb",
         "cuda_device": 0,
