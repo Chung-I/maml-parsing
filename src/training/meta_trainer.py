@@ -468,9 +468,10 @@ class MetaTrainer(TrainerBase):
                                                   num_training_batches[0] * self._num_epochs)
                 G_loss = -alpha * g_loss
                 G_loss.backward()
-                self.optimizer.step()
                 self._writer.log({"G_loss": g_loss.detach().item(), "alpha": alpha, "G_acc": acc},
                                  step=self._batch_num_total)
+
+            self.optimizer.step()
 
             # Update moving averages
             if self._moving_average is not None:
