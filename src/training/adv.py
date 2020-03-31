@@ -19,7 +19,7 @@ class TaskDiscriminator(nn.Module, FromParams):
                  weight: float = None,
                  steps_per_update: int = 5,
                  target_distribution: str = 'uniform',
-                 num_langs: int = 1):
+                 num_tasks: int = 1):
         super().__init__()
         self.first_n_states = first_n_states
         self.weight = weight
@@ -27,7 +27,7 @@ class TaskDiscriminator(nn.Module, FromParams):
         self.steps_per_update = steps_per_update
         self._projection = FeedForward(
             input_dim=encoder.get_output_dim(),
-            hidden_dims=num_langs,
+            hidden_dims=num_tasks,
             num_layers=1,
             activations=Activation.by_name("relu")(),
         )

@@ -181,18 +181,16 @@ class BaseWrapper(Wrapper):
             tasks (list, torch.utils.data.DataLoader): list of task-specific dataloaders.
             meta_train (bool): whether current run in during meta-training.
         """
-        total_loss = 0.0
+        losses = []
         for task in tasks:
-            task_loss = self.run_task(task, train=train, meta_train=meta_train)
-            total_loss += task_loss
-
-        avg_loss = total_loss / len(tasks)
+            loss = self.run_task(task, train=train, meta_train=meta_train)
+            losses.append(loss)
 
         # Meta gradient step
         if meta_train:
             self._final_meta_update()
 
-        return avg_loss
+        return losses
 
     def run_task(self, task, train, meta_train):
         """Run model on a given task.
@@ -223,7 +221,7 @@ class BaseWrapper(Wrapper):
             meta_train (bool): whether to meta-train on task.
         """
 
-        train_loss = 0.0
+        losses = []
         N = len(batches)
         device = next(self._container.parameters()).device
 
@@ -237,7 +235,7 @@ class BaseWrapper(Wrapper):
             loss = output_dict["loss"]
             if torch.isnan(loss):
                 raise ValueError("nan loss encountered")
-            train_loss += loss.item() / len(batches)
+            losses.append(loss.item())
             # TRAINING #
             if not train:
                 continue
@@ -251,7 +249,7 @@ class BaseWrapper(Wrapper):
         if meta_train:
             self._partial_meta_update(len(batches))
 
-        return train_loss
+        return losses
 
     @classmethod
     def from_params(

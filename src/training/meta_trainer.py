@@ -6,6 +6,7 @@ import time
 import traceback
 from collections import defaultdict
 from typing import Dict, Optional, Tuple, Union, Iterable, Any
+import numpy as np
 
 import torch
 import torch.distributed as dist
@@ -328,7 +329,9 @@ class MetaTrainer(TrainerBase):
                                           f"task-total_norm_ratio_{name}": ratio},
                                          step=self._batch_num_total)
                 avg_ratio = total_summed_grad_norm / total_task_grad_norm
-                self._writer.log({"avg_task-total_norm_ratio": avg_ratio},
+                self._writer.log({"avg_task-total_norm_ratio": avg_ratio,
+                                  "total_grad_norm": total_summed_grad_norm,
+                                  "total_task_grad_norm": total_task_grad_norm},
                                  step=self._batch_num_total)
 
         self.wrapper.update_hook = update_hook
@@ -376,16 +379,17 @@ class MetaTrainer(TrainerBase):
 
         # Get tqdm for the training batches
 
-        batch_generators = [self.iterator(train_data, num_epochs=1, shuffle=self.shuffle)
-            for key, train_data in self.train_datas.items()]
-        batch_group_generators = [lazy_groups_of(
+        batch_generators = {task: self.iterator(train_data, num_epochs=1, shuffle=self.shuffle)
+            for task, train_data in self.train_datas.items()}
+        batch_group_generators = {task: lazy_groups_of(
             batch_generator, self._num_gradient_accumulation_steps
-        ) for batch_generator in batch_generators]
+        ) for task, batch_generator in batch_generators.items()}
         num_training_batches = [math.ceil(
             self.iterator.get_num_batches(train_data) / self._num_gradient_accumulation_steps
-        ) for key, train_data in self.train_datas.items()]
+        ) for task, train_data in self.train_datas.items()]
         assert len(set(num_training_batches)) == 1, "num_training_batches doesn't agree"
-        num_tasks = len(batch_group_generators) 
+        tasks = list(batch_group_generators.keys())
+        num_tasks = len(tasks)
 
         if isinstance(self._learning_rate_scheduler, SlantedTriangular):
             old_num_steps_per_epoch = self._learning_rate_scheduler.num_steps_per_epoch
@@ -405,8 +409,9 @@ class MetaTrainer(TrainerBase):
         cumulative_batch_group_size = 0
         tqdm_bar = Tqdm.tqdm(range(num_training_batches[0]))
         for _ in tqdm_bar:
-            randperms = torch.randperm(len(batch_group_generators)).tolist()
-            tasks = [next(batch_group_generators[idx]) for idx in randperms[:self._tasks_per_step]]
+            randperms = torch.randperm(len(tasks)).tolist()
+            sampled_tasks = [tasks[idx] for idx in randperms[:self._tasks_per_step]]
+            sampled_task_generators = [next(batch_group_generators[task]) for task in sampled_tasks]
 
             batches_this_epoch += 1
             self._batch_num_total += 1
@@ -414,10 +419,16 @@ class MetaTrainer(TrainerBase):
 
             self.optimizer.zero_grad()
 
-            loss = self.wrapper(tasks=tasks, train=True, meta_train=True)
+            losses = self.wrapper(tasks=sampled_task_generators, train=True, meta_train=True)
+            losses_inner_steps = list(map(np.mean, zip(*losses)))
 
-            self._writer.log({"step_loss": loss}, step=self._batch_num_total)
-            train_loss += loss
+            self._writer.log({f"step_loss_{task}_{i}": loss
+                              for task, task_losses in zip(sampled_tasks, losses)
+                              for i, loss in enumerate(task_losses)},
+                             step=self._batch_num_total)
+            self._writer.log({f"step_loss_{i}": loss for i, loss in enumerate(losses_inner_steps)},
+                             step=self._batch_num_total)
+            train_loss += losses_inner_steps[0]
 
             batch_grad_norm = self.rescale_gradients()
 
@@ -433,7 +444,10 @@ class MetaTrainer(TrainerBase):
                 steps_per_update = self.task_D.steps_per_update
                 if (batch_num_total - 1) % steps_per_update == 0:
                     self.optim_D.zero_grad()
-                    hidden_states, labels, masks = self.task_D.get_hidden_states(self.model, tasks)
+                    hidden_states, labels, masks = self.task_D.get_hidden_states(
+                        self.model,
+                        sampled_task_generators
+                    )
                     D_loss, _, acc = self.task_D(hidden_states, labels, masks, detach=True)
                     D_loss.backward()
                     self.optim_D.step()
@@ -442,7 +456,10 @@ class MetaTrainer(TrainerBase):
                                      step=self._batch_num_total)
 
                 # G training
-                hidden_states, labels, masks = self.task_D.get_hidden_states(self.model, tasks)
+                hidden_states, labels, masks = self.task_D.get_hidden_states(
+                    self.model,
+                    sampled_task_generators
+                )
                 _, g_loss, acc = self.task_D(hidden_states, labels, masks)
                 if self.task_D.weight:
                     alpha = self.task_D.weight
@@ -904,9 +921,9 @@ class MetaTrainer(TrainerBase):
 
         task_discriminator_params = params.pop("task_discriminator", None)
         if task_discriminator_params:
-            num_langs = model.vocab.get_vocab_size("lang_labels")
+            num_tasks = model.vocab.get_vocab_size("lang_labels")
             task_discriminator = TaskDiscriminator.from_params(task_discriminator_params,
-                                                               num_langs=num_langs)
+                                                               num_tasks=num_tasks)
             if cuda_device >= 0:
                 task_discriminator = task_discriminator.cuda(cuda_device)
 
