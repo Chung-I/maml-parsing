@@ -3,12 +3,13 @@ import random
 from copy import deepcopy
 from abc import abstractmethod
 from collections import OrderedDict, defaultdict
-from typing import Dict, Optional, Tuple, Union, Iterable, Any, Callable
+from typing import List, Dict, Optional, Tuple, Union, Iterable, Any, Callable
 
 import torch
+import higher
 
 from allennlp.training.trainer_base import TrainerBase
-from allennlp.common import Params, Registrable
+from allennlp.common import Params, Registrable, FromParams
 from allennlp.common.checks import ConfigurationError, parse_cuda_device, check_for_gpu
 from allennlp.common.tqdm import Tqdm
 from allennlp.common.util import dump_metrics, gpu_memory_mb, peak_memory_mb, lazy_groups_of
@@ -26,25 +27,9 @@ from allennlp.training.tensorboard_writer import TensorboardWriter
 
 from src.training.util import clone_state_dict, move_to_device
 
-class Wrapper(Registrable):
+class Wrapper(Registrable, FromParams):
     def __init__(self):
         pass
-
-    @classmethod
-    def from_params(  # type: ignore
-        cls,
-        model: Model,
-        optimizer: Optimizer,
-        params: Params,
-    ) -> "Wrapper":
-        typ3 = params.pop("type", "default")
-        klass: Type[Wrapper] = Wrapper.by_name(typ3)  # type: ignore
-        # Explicit check to prevent recursion.
-        is_overriden = (
-            klass.from_params.__func__ != Wrapper.from_params.__func__  # type: ignore
-        )
-        assert is_overriden, f"Class {klass.__name__} must override `from_params`."
-        return klass.from_params(model, optimizer, params)
 
 
 @Wrapper.register("multi")
@@ -135,7 +120,6 @@ class BaseWrapper(Wrapper):
         self._grad_clipping = grad_clipping
         self._grad_norm = grad_norm
         self._container = deepcopy(self.model)
-        #self.model.get_metrics = self._container.get_metrics
         training_util.enable_gradient_clipping(self.model, self._grad_clipping)
         self.optimizer_cls = getattr(torch.optim, optimizer_cls)
         self.optimizer_kwargs = optimizer_kwargs
@@ -181,16 +165,16 @@ class BaseWrapper(Wrapper):
             tasks (list, torch.utils.data.DataLoader): list of task-specific dataloaders.
             meta_train (bool): whether current run in during meta-training.
         """
-        losses = []
+        metrics = []
         for task in tasks:
-            loss = self.run_task(task, train=train, meta_train=meta_train)
-            losses.append(loss)
+            metric = self.run_task(task, train=train, meta_train=meta_train)
+            metrics.append(metric)
 
         # Meta gradient step
         if meta_train:
             self._final_meta_update()
 
-        return losses
+        return metrics
 
     def run_task(self, task, train, meta_train):
         """Run model on a given task.
@@ -221,7 +205,7 @@ class BaseWrapper(Wrapper):
             meta_train (bool): whether to meta-train on task.
         """
 
-        losses = []
+        metrics = []
         N = len(batches)
         device = next(self._container.parameters()).device
 
@@ -231,11 +215,12 @@ class BaseWrapper(Wrapper):
             inputs = move_to_device(inputs, device)
 
             # Evaluate model
-            output_dict = self._container(**inputs)
+            output_dict = self._container(**inputs, return_metric=True)
             loss = output_dict["loss"]
+            metric = output_dict["metric"]
             if torch.isnan(loss):
                 raise ValueError("nan loss encountered")
-            losses.append(loss.item())
+            metrics.append({"loss": loss.item(), "metric": metric})
             # TRAINING #
             if not train:
                 continue
@@ -249,33 +234,7 @@ class BaseWrapper(Wrapper):
         if meta_train:
             self._partial_meta_update(len(batches))
 
-        return losses
-
-    @classmethod
-    def from_params(
-        cls,
-        model: Model,
-        meta_optimizer: torch.optim.Optimizer,
-        params: Params,
-        update_hook: Callable = None,
-    ) -> "Wrapper":
-
-        grad_norm = params.pop_float("grad_norm", None)
-        grad_clipping = params.pop_float("grad_clipping", None)
-        optimizer_cls = params.pop("optimizer_cls", "SGD")
-        optimizer_kwargs = params.pop("optimizer_kwargs", Params({})).as_dict()
-
-        params.assert_empty(cls.__name__)
-
-        return cls(
-            model,
-            meta_optimizer,
-            optimizer_cls,
-            optimizer_kwargs,
-            grad_norm=grad_norm,
-            grad_clipping=grad_clipping,
-            update_hook=update_hook,
-        )
+        return metrics
 
 
 class NoWrapper(BaseWrapper):
@@ -414,53 +373,82 @@ class FOMAMLWrapper(_FOWrapper):
         super(FOMAMLWrapper, self).__init__(*args, **kwargs)
 
 
-class MAMLWrapper(object):
-
-    """Wrapper around the MAML meta-learner.
-    Arguments:
-        model (nn.Module): classifier.
-        optimizer_cls: optimizer class.
-        meta_optimizer_cls: meta optimizer class.
-        optimizer_kwargs (dict): kwargs to pass to optimizer upon construction.
-        meta_optimizer_kwargs (dict): kwargs to pass to meta optimizer upon construction.
-        criterion (func): loss criterion to use.
-    """
-
-    def __init__(self, model, optimizer_cls, meta_optimizer_cls, optimizer_kwargs,
-                 meta_optimizer_kwargs, criterion):
-        self.criterion = criterion
+@Wrapper.register("maml")
+class MAMLWrapper(Wrapper):
+    def __init__(
+        self,
+        model: Model,
+        meta_optimizer: torch.optim.Optimizer,
+        optimizer_cls: str,
+        optimizer_kwargs: Dict[str, Any],
+        shuffle_label_namespaces: List[str] = [],
+        grad_norm: Optional[float] = None,
+        grad_clipping: Optional[float] = None,
+        update_hook: Callable = None,
+    ):
+        super(MAMLWrapper, self).__init__()
+        self._counter = 0
         self.model = model
+        self.meta_optimizer = meta_optimizer
+        self.inner_optimizer = getattr(torch.optim, optimizer_cls)(
+            self.model.parameters(),
+            **optimizer_kwargs
+        )
+        self._shuffler_factory: Dict[str, Callable] = {}
+        for namespace in shuffle_label_namespaces:
+            num_labels = self.model.vocab.get_vocab_size(namespace)
+            self._shuffler_factory[namespace] = \
+                lambda: [0] + (torch.randperm(num_labels - 1) + 1).tolist()
 
-        self.optimizer_cls = maml.SGD if optimizer_cls.lower() == 'sgd' else maml.Adam
+    @property
+    def container(self):
+        return self.model
 
-        self.meta = maml.MAML(optimizer_cls=self.optimizer_cls,
-                              model=model, tensor=False, **optimizer_kwargs)
+    def shuffle_labels(self, inputs, label_shufflers):
+        for key, value in inputs.items():
+            if key in label_shufflers:
+                shuffler = value.new_tensor(label_shufflers[key])
+                inputs[key] = shuffler[value]
 
-        self.meta_optimizer_cls = optim.SGD if meta_optimizer_cls.lower() == 'sgd' else optim.Adam
+        return inputs
 
-        self.optimizer_kwargs = optimizer_kwargs
-        self.meta_optimizer = self.meta_optimizer_cls(self.meta.parameters(), **meta_optimizer_kwargs)
+    def __call__(self, tasks, train=True, meta_train=True):
+        losses = []
+        for task in tasks:
+            loss = self.run_task(task, train=train, meta_train=meta_train)
+            losses.append(loss)
 
-    def __call__(self, meta_batch, meta_train):
-        tasks = []
-        for t in meta_batch:
-            t.dataset.train()
-            inner = [b for b in t]
-            t.dataset.eval()
-            outer = [b for b in t]
-            tasks.append((inner, outer))
-        return self.run_meta_batch(tasks, meta_train=meta_train)
+        return losses
 
-    def run_meta_batch(self, meta_batch, meta_train):
-        """Run on meta-batch.
-        Arguments:
-            meta_batch (list): list of task-specific dataloaders
-            meta_train (bool): meta-train on batch.
-        """
-        loss, results = self.meta(meta_batch, return_predictions=False, return_results=True, create_graph=meta_train)
-        if meta_train:
+    def run_task(self, task, train, meta_train):
+        if train:
+            self.model.train()
+        else:
+            self.model.eval()
+        return self.run_batches(task, train=train, meta_train=meta_train)
+
+    def run_batches(self, batches, train=True, meta_train=True):
+        metrics = []
+        device = next(self.model.parameters()).device
+        shufflers = {key: shuffler() for key, shuffler in self._shuffler_factory.items()}
+        with higher.innerloop_ctx(
+            self.model, self.inner_optimizer, copy_initial_weights=False
+        ) as (fmodel, diffopt):
+            for n, inputs in enumerate(batches[:-1]):
+                inputs = self.shuffle_labels(inputs, shufflers)
+                inputs = move_to_device(inputs, device)
+                output_dict = self.model(**inputs, return_metric=True)
+                loss = output_dict["loss"]
+                metric = output_dict["metric"]
+                diffopt.step(loss)
+                metrics.append({"loss": loss.item(), "metric": metric})
+
+            inputs = self.shuffle_labels(batches[-1], shufflers)
+            inputs = move_to_device(inputs, device)
+            output_dict = self.model(**inputs, return_metric=True)
+            loss = output_dict["loss"]
+            metric = output_dict["metric"]
             loss.backward()
-            self.meta_optimizer.step()
-            self.meta_optimizer.zero_grad()
+            metrics.append({"loss": loss.item(), "metric": metric})
 
-        return results
+        return metrics

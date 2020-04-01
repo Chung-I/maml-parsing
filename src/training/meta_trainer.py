@@ -419,16 +419,21 @@ class MetaTrainer(TrainerBase):
 
             self.optimizer.zero_grad()
 
-            losses = self.wrapper(tasks=sampled_task_generators, train=True, meta_train=True)
-            losses_inner_steps = list(map(np.mean, zip(*losses)))
+            task_metrics = self.wrapper(tasks=sampled_task_generators, train=True, meta_train=True)
+            losses = [list(map(lambda x: x["loss"], metrics)) for metrics in task_metrics]
+            LASes = [list(map(lambda x: x["metric"]["LAS"], metrics)) for metrics in task_metrics]
 
-            self._writer.log({f"step_loss_{task}_{i}": loss
-                              for task, task_losses in zip(sampled_tasks, losses)
-                              for i, loss in enumerate(task_losses)},
-                             step=self._batch_num_total)
-            self._writer.log({f"step_loss_{i}": loss for i, loss in enumerate(losses_inner_steps)},
-                             step=self._batch_num_total)
-            train_loss += losses_inner_steps[0]
+            for name, values in zip(["loss", "LAS"], [losses, LASes]):
+                self._writer.log({f"step_{name}_{task}_{i}": value
+                                  for task, task_values in zip(sampled_tasks, values)
+                                  for i, value in enumerate(task_values)},
+                                 step=self._batch_num_total)
+                values_inner_steps = list(map(np.mean, zip(*values)))
+                self._writer.log({f"step_{name}_{i}": value for i, value in
+                                  enumerate(values_inner_steps)},
+                                 step=self._batch_num_total)
+                if name == "loss":
+                    train_loss += values_inner_steps[0]
 
             batch_grad_norm = self.rescale_gradients()
 
@@ -926,9 +931,10 @@ class MetaTrainer(TrainerBase):
         num_gradient_accumulation_steps = params.pop("num_gradient_accumulation_steps", 1)
         tasks_per_step = params.pop_int("tasks_per_step", 0)
         wrapper = Wrapper.from_params(
-            model,
-            optimizer,
-            params.pop("wrapper"))
+            params.pop("wrapper"),
+            model=model,
+            meta_optimizer=optimizer,
+        )
 
         task_discriminator_params = params.pop("task_discriminator", None)
         if task_discriminator_params:

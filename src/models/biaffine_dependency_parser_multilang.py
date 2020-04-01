@@ -128,6 +128,7 @@ class BiaffineDependencyParserMultiLang(BiaffineDependencyParser):
         lemmas: TextFieldTensors = None,
         feats: TextFieldTensors = None,
         langs: torch.LongTensor = None,
+        return_metric: bool = False,
     ) -> Dict[str, torch.Tensor]:
 
         """
@@ -169,18 +170,22 @@ class BiaffineDependencyParserMultiLang(BiaffineDependencyParser):
 
         loss = arc_nll + tag_nll
 
+        metric = None
         if head_indices is not None and head_tags is not None:
             evaluation_mask = self._get_mask_for_eval(mask[:, 1:], pos_tags)
             # We calculate attatchment scores for the whole sentence
             # but excluding the symbolic ROOT token at the start,
             # which is why we start from the second element in the sequence.
-            self._lang_attachment_scores[batch_lang](
+            scores = self._lang_attachment_scores[batch_lang]
+            scores(
                 predicted_heads[:, 1:],
                 predicted_head_tags[:, 1:],
                 head_indices,
                 head_tags,
                 evaluation_mask,
             )
+            if return_metric:
+                metric = scores.get_metric(reset=True)
 
         output_dict = {
             "hidden_state": encoded_text,
@@ -190,6 +195,7 @@ class BiaffineDependencyParserMultiLang(BiaffineDependencyParser):
             "tag_loss": tag_nll,
             "loss": loss,
             "mask": mask,
+            "metric": metric,
         }
 
         self._add_metadata_to_output_dict(metadata, output_dict)
