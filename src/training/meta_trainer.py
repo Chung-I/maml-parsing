@@ -746,6 +746,11 @@ class MetaTrainer(TrainerBase):
         if self._momentum_scheduler is not None:
             training_states["momentum_scheduler"] = self._momentum_scheduler.state_dict()
 
+        if self.task_D is not None:
+            training_states["task_discriminator"] = self.task_D.state_dict()
+        if self.optim_D is not None:
+            training_states["discriminator_optimizer"] = self.optim_D.state_dict()
+
         if self._save_embedder:
             model_state = self.model.state_dict()
         else:
@@ -797,6 +802,11 @@ class MetaTrainer(TrainerBase):
         if self._momentum_scheduler is not None and "momentum_scheduler" in training_state:
             self._momentum_scheduler.load_state_dict(training_state["momentum_scheduler"])
         training_util.move_optimizer_to_cuda(self.optimizer)
+
+        if self.task_D is not None and "task_discriminator" in training_state:
+            self.task_D.load_state_dict(training_state["task_discriminator"])
+        if self.optim_D is not None and "discriminator_optimizer" in training_state:
+            self.optim_D.load_state_dict(training_state["discriminator_optimizer"])
 
         # Currently the `training_state` contains a serialized `MetricTracker`.
         if "metric_tracker" in training_state:
