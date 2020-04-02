@@ -325,7 +325,6 @@ class _FOWrapper(BaseWrapper):
             if n not in self._updates or p.grad is None:
                 continue
 
-            print(self._all_grads)
             if self._all_grads is True:
                 trajectory = (self.model.state_dict()[n].data - p.data) / num_batches
                 self._updates[n].add_(trajectory)
