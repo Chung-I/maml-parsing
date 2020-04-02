@@ -279,10 +279,25 @@ class _FOWrapper(BaseWrapper):
 
     _all_grads = None
 
-    def __init__(self,
-                 *args,
-                 **kwargs):
-        super(_FOWrapper, self).__init__(*args, **kwargs)
+    def __init__(
+        self,
+        model: Model,
+        meta_optimizer: torch.optim.Optimizer,
+        optimizer_cls: str,
+        optimizer_kwargs: Dict[str, Any],
+        grad_norm: Optional[float] = None,
+        grad_clipping: Optional[float] = None,
+        update_hook: Callable = None,
+    ):
+        super(_FOWrapper, self).__init__(
+            model=model,
+            meta_optimizer=meta_optimizer,
+            optimizer_cls=optimizer_cls,
+            optimizer_kwargs=optimizer_kwargs,
+            grad_norm=grad_norm,
+            grad_clipping=grad_clipping,
+            update_hook=update_hook,
+        )
         self._counter = 0
         self._updates = None
         self._norms = defaultdict(list)
@@ -310,6 +325,7 @@ class _FOWrapper(BaseWrapper):
             if n not in self._updates or p.grad is None:
                 continue
 
+            print(self._all_grads)
             if self._all_grads is True:
                 trajectory = (self.model.state_dict()[n].data - p.data) / num_batches
                 self._updates[n].add_(trajectory)
@@ -351,9 +367,6 @@ class ReptileWrapper(_FOWrapper):
 
     _all_grads = True
 
-    def __init__(self, *args, **kwargs):
-        super(ReptileWrapper, self).__init__(*args, **kwargs)
-
 
 @Wrapper.register("fomaml")
 class FOMAMLWrapper(_FOWrapper):
@@ -368,9 +381,6 @@ class FOMAMLWrapper(_FOWrapper):
     """
 
     _all_grads = False
-
-    def __init__(self, *args, **kwargs):
-        super(FOMAMLWrapper, self).__init__(*args, **kwargs)
 
 
 @Wrapper.register("maml")
@@ -398,7 +408,7 @@ class MAMLWrapper(Wrapper):
         for namespace in shuffle_label_namespaces:
             num_labels = self.model.vocab.get_vocab_size(namespace)
             self._shuffler_factory[namespace] = \
-                lambda: [0] + (torch.randperm(num_labels - 1) + 1).tolist()
+                lambda: torch.randperm(num_labels)
 
     @property
     def container(self):
@@ -407,7 +417,7 @@ class MAMLWrapper(Wrapper):
     def shuffle_labels(self, inputs, label_shufflers):
         for key, value in inputs.items():
             if key in label_shufflers:
-                shuffler = value.new_tensor(label_shufflers[key])
+                shuffler = label_shufflers[key].to(value.device)
                 inputs[key] = shuffler[value]
 
         return inputs
