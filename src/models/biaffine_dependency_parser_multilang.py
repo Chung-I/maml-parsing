@@ -195,8 +195,10 @@ class BiaffineDependencyParserMultiLang(BiaffineDependencyParser):
             "tag_loss": tag_nll,
             "loss": loss,
             "mask": mask,
-            "metric": metric,
         }
+
+        if metric is not None:
+            output_dict["metric"] = metric
 
         self._add_metadata_to_output_dict(metadata, output_dict)
 

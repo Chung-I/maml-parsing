@@ -26,6 +26,7 @@ from allennlp.training.optimizers import Optimizer
 from allennlp.training.tensorboard_writer import TensorboardWriter
 
 from src.training.util import clone_state_dict, move_to_device
+from src.modules import maml
 
 class Wrapper(Registrable, FromParams):
     def __init__(self):
@@ -461,3 +462,49 @@ class MAMLWrapper(Wrapper):
             metrics.append({"loss": loss.item(), "metric": metric})
 
         return metrics
+
+
+@Wrapper.register("vanilla-maml")
+class MAMLWrapper(Wrapper):
+
+    """Wrapper around the MAML meta-learner.
+    Arguments:
+        model (nn.Module): classifier.
+        optimizer_cls: optimizer class.
+        meta_optimizer_cls: meta optimizer class.
+        optimizer_kwargs (dict): kwargs to pass to optimizer upon construction.
+        meta_optimizer_kwargs (dict): kwargs to pass to meta optimizer upon construction.
+        criterion (func): loss criterion to use.
+    """
+
+    def __init__(
+        self,
+        model: Model,
+        meta_optimizer: torch.optim.Optimizer,
+        optimizer_cls: str,
+        optimizer_kwargs: Dict[str, Any],
+        shuffle_label_namespaces: List[str] = [],
+        grad_norm: Optional[float] = None,
+        grad_clipping: Optional[float] = None,
+        update_hook: Callable = None,
+    ):
+        self.model = model
+        self.optimizer_cls = maml.SGD if optimizer_cls.lower() == 'sgd' else maml.Adam
+        self.meta = maml.MAML(optimizer_cls=self.optimizer_cls,
+                              model=model, **optimizer_kwargs)
+        self.meta_optimizer = meta_optimizer
+
+    def __call__(self, tasks, meta_train, train=True):
+        return self.run_meta_batch(tasks, meta_train=meta_train)
+
+    def run_meta_batch(self, meta_batch, meta_train):
+        """Run on meta-batch.
+        Arguments:
+            meta_batch (list): list of task-specific dataloaders
+            meta_train (bool): meta-train on batch.
+        """
+        loss, results = self.meta(meta_batch, create_graph=meta_train)
+        if meta_train:
+            loss.backward()
+
+        return results
