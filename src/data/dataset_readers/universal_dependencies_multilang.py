@@ -92,6 +92,10 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         the first pass will run over the entire dataset of each file (even if alternate is on).
     instances_per_file : `int`, optional (default = 32)
         The amount of consecutive cases to sample from each input file when alternating.
+    use_language_specific_deprel: `bool`, optional (default = False)
+        Whether to use language-specific relations or not. If true,
+        language-specific parts of the relation, e.g. "obl:appl", will be truncated
+        to "obl".
     """
 
     def __init__(
@@ -107,6 +111,8 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         read_dependencies: bool = True,
         read_language: bool = True,
         view: str = 'graph',
+        use_language_specific_deprel: bool = True,
+        deprel_file: str = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -128,6 +134,26 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         self._iterators: List[Tuple[str, Iterator[Any]]] = None
         self._read_dependencies = read_dependencies
         self._read_language = read_language
+        self._use_language_specific_deprel = use_language_specific_deprel
+        self._deprels = None
+        if deprel_file is not None:
+            with open(deprel_file) as fp:
+                self._deprels = fp.read().splitlines()
+
+    def map_deprel(self, rel):
+        urel = rel.split(":")[0]
+        xrel = rel
+        if self._deprels is None:
+            if self._use_language_specific_deprel:
+                return xrel
+            else:
+                return urel
+        else:
+            if self._use_language_specific_deprel and rel in self._deprels:
+                return xrel
+            else:
+                return urel
+            return rel
 
     def _read_one_file(self, lang: str, file_path: str):
         with open(file_path, "r") as conllu_file:
@@ -164,6 +190,7 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
                                                      if hasattr(x, "items") else "_")
                 heads = get_field("head")
                 dep_rels = get_field("deprel")
+                dep_rels = list(map(self.map_deprel, dep_rels))
                 dependencies = list(zip(dep_rels, heads)) if self._read_dependencies else None
                 yield self.text_to_instance(lang, words, lemmas, upos_tags, xpos_tags,
                                             feats, dependencies, ids, multiword_ids, multiword_forms)
