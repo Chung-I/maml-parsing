@@ -11,10 +11,11 @@ class BaseModel(nn.Module):
         super(BaseModel, self).__init__()
         self.linear = linear
 
-    def forward(self, inputs):
+    def forward(self, inputs, return_metric=False):
         output_dict = {}
         outputs = self.linear(inputs)
         output_dict["loss"] = torch.sum(outputs ** 2)
+        output_dict["metric"] = 0
         return output_dict
 
 class MultiWrapperTest(TestCase):
@@ -66,7 +67,9 @@ class ReptileWrapperTest(TestCase):
         self.optimizer.zero_grad()
         expected_grad = torch.tensor([[-0.00392, 0.00392],[-0.00392, 0.00392]])
         expected_weight = torch.tensor([[0.10392, 0.29608],[0.20392, 0.39608]])
-        loss = self.wrapper(self.tasks)
+        task_metrics = self.wrapper(self.tasks)
+        losses = [list(map(lambda x: x["loss"], metrics)) for metrics in task_metrics]
+        loss = np.mean(losses)
         self.optimizer.step()
         np.testing.assert_array_almost_equal(loss, 0.00076864)
         np.testing.assert_array_almost_equal(self.wrapper.model.linear.weight.grad, expected_grad)
@@ -94,7 +97,9 @@ class FOMAMLWrapperTest(TestCase):
         self.optimizer.zero_grad()
         expected_grad = torch.tensor([[-0.00384, 0.00384],[-0.00384, 0.00384]])
         expected_weight = torch.tensor([[0.10384, 0.29616],[0.20384, 0.39616]])
-        loss = self.wrapper(self.tasks)
+        task_metrics = self.wrapper(self.tasks)
+        losses = [list(map(lambda x: x["loss"], metrics)) for metrics in task_metrics]
+        loss = np.mean(losses)
         self.optimizer.step()
         np.testing.assert_array_almost_equal(loss, 0.00076864)
         np.testing.assert_array_almost_equal(self.wrapper.model.linear.weight.grad, expected_grad)
@@ -123,10 +128,13 @@ class WrapperEquivalenceTest(TestCase):
         for i in range(5):
             self.fomaml_wrapper.meta_optimizer.zero_grad()
             self.multi_wrapper.optimizer.zero_grad()
-            loss = self.fomaml_wrapper(self.tasks)
-            loss = self.multi_wrapper(self.tasks)
+            task_metrics = self.fomaml_wrapper(self.tasks)
+            losses = [list(map(lambda x: x["loss"], metrics)) for metrics in task_metrics]
+            fomaml_loss = np.mean(losses)
+            multi_loss = self.multi_wrapper(self.tasks)
             self.fomaml_wrapper.meta_optimizer.step()
             self.multi_wrapper.optimizer.step()
+            np.testing.assert_array_almost_equal(fomaml_loss, multi_loss)
         np.testing.assert_array_almost_equal(self.fomaml_wrapper.model.linear.weight.grad,
                                              self.multi_wrapper.model.linear.weight.grad)
         np.testing.assert_array_almost_equal(self.fomaml_wrapper.model.linear.weight.data,

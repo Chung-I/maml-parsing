@@ -8,11 +8,19 @@ import json
 import shutil
 import numpy as np
 
-import stanfordnlp
-from stanfordnlp.models.common.conll import CoNLLFile
+import stanza
+from stanza.models.common.doc import Document
+from stanza.utils.conll import CoNLL
 
 np.random.seed(0)
 
+def flatten(l):
+    return [item for sublist in l for item in sublist]
+
+def write_doc_to_file(doc, out_file):
+    conll_string = CoNLL.conll_as_string(CoNLL.convert_dict(doc.to_dict()))
+    with open(str(out_file), "w") as fp:
+        fp.write(conll_string)
 
 def determine_treebank_factory(model_dir, tb_maps):
     def determine_treebank(tb):
@@ -31,7 +39,7 @@ def determine_treebank_factory(model_dir, tb_maps):
     return determine_treebank
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--langs')
+parser.add_argument('--lang-file')
 parser.add_argument('--ud-root')
 parser.add_argument('--model-dir')
 parser.add_argument('--out-dir')
@@ -51,7 +59,7 @@ tb_maps = {"br_keb": "ga_idt",
 
 determine_treebank = determine_treebank_factory(model_dir, tb_maps)
 
-with open(args.langs) as fp:
+with open(args.lang_file) as fp:
     train_tbs = [line.split()[0] for line in fp.read().splitlines()]
 
 def prep_conllu(tb, file_path, overwrite):
@@ -63,13 +71,11 @@ def prep_conllu(tb, file_path, overwrite):
     if not lang:
         shutil.copy(file_path, out_file)
         return None
-    doc = stanfordnlp.Document('')
-    doc.conll_file = CoNLLFile(file_path)
-    nlp = stanfordnlp.Pipeline(lang=lang, treebank=tb,
-                               processors='tokenize,pos',
-                               tokenize_pretokenized=True)
-    nlp.processors['pos'].process(doc)
-    doc.load_annotations()
+    doc = Document(CoNLL.conll2dict(input_file=file_path))
+    nlp = stanza.Pipeline(lang=lang,
+                          processors='tokenize,mwt,pos',
+                          tokenize_pretokenized=True)
+    doc = nlp.processors['pos'].process(doc)
     return doc
 
 if args.split == "traindev":
@@ -85,7 +91,7 @@ if args.split == "traindev":
             doc = prep_conllu(tb, file_path, args.overwrite)
             if doc is not None:
                 out_file = out_dir.joinpath(file_path.name)
-                doc.write_conll_to_file(str(out_file))
+                write_doc_to_file(doc, out_file)
 
         # prepare train.conllu and dev.conllu (if has_dev == False)
         conll_glob = list(ud_root.glob(f"*/{tb}-ud-train.conllu"))
@@ -95,38 +101,39 @@ if args.split == "traindev":
         if doc is not None:
             if has_dev:
                 out_file = out_dir.joinpath(file_path.name)
-                doc.write_conll_to_file(str(out_file))
+                write_doc_to_file(doc, out_file)
             else:
                 out_train_file = out_dir.joinpath(file_path.name)
                 dev_name = file_path.name.split("-")[0] + "-ud-dev.conllu"
                 out_dev_file = out_dir.joinpath(dev_name)
                 out_dev_file.touch()
 
-                train_conll = CoNLLFile(str(out_train_file))
-                dev_conll = CoNLLFile(str(out_dev_file))
+                sents = doc.to_dict()
 
-                sents = doc.conll_file.sents
                 permutations = np.random.permutation(np.arange(len(sents))).tolist()
                 divide = len(sents) * 7 // 8
                 train_sents = [sents[idx] for idx in permutations[:divide]]
                 dev_sents = [sents[idx] for idx in permutations[divide:]]
 
-                train_conll._sents = train_sents
-                dev_conll._sents = dev_sents
+                train_doc = Document(train_sents)
+                write_doc_to_file(train_doc, out_train_file)
 
-                train_conll.write_conll(out_train_file)
-                dev_conll.write_conll(out_dev_file)
-            
-        
+                dev_doc = Document(dev_sents)
+                write_doc_to_file(dev_doc, out_dev_file)
 
 elif args.split == "test":
     kwargs = {}
     if args.case == "preprocess":
         kwargs['processors'] = 'tokenize,mwt,pos,lemma'
-    txt_files = list(ud_root.glob("conll18-ud-test/*_*.txt"))
-    assert len(txt_files) == 82, f"number of txt_files = {len(txt_files)}; should be 82"
+    if not args.lang_file:
+        txt_files = list(ud_root.glob("*/*_*.txt"))
+        assert len(txt_files) == 82, f"number of txt_files = {len(txt_files)}; should be 82"
+    else:
+        with open(args.lang_file) as fp:
+            tbs = fp.read().splitlines()
+        txt_files = flatten([list(ud_root.rglob(f"{tb}-ud-test.txt")) for tb in tbs])
     for txt_file in sorted(txt_files):
-        out_file = out_dir.joinpath(txt_file.stem + "-ud-test.conllu")
+        out_file = out_dir.joinpath(txt_file.stem.split("-")[0] + "-ud-test.conllu")
         if out_file.exists() and not args.overwrite:
             print(f"{out_file.name} exists; skipping")
             continue
@@ -138,10 +145,9 @@ elif args.split == "test":
             continue
         kwargs.update(tb_kwargs)
         with open(txt_file) as fp:
-            doc = stanfordnlp.Document(fp.read())
-            nlp = stanfordnlp.Pipeline(lang=lang, treebank=tb, **kwargs)
-            annotated = nlp(doc)
-            annotated.write_conll_to_file(str(out_file))
+            nlp = stanza.Pipeline(lang=lang, **kwargs)
+            doc = nlp(fp.read())
+            write_doc_to_file(doc, out_file)
 else:
     raise NotImplementedError
 
