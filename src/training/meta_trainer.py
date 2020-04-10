@@ -33,7 +33,7 @@ from allennlp.training.trainer_base import TrainerBase
 from src.training.wandb_writer import WandBWriter
 from src.training.tensorboard_writer import TensorboardWriter
 from src.training.wrapper import Wrapper
-from src.training.adv import TaskDiscriminator
+from src.modules.adv import TaskDiscriminator
 from src.training.util import as_flat_dict, filter_state_dict
 
 logger = logging.getLogger(__name__)
