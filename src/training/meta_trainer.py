@@ -310,6 +310,8 @@ class MetaTrainer(TrainerBase):
         self.task_D = task_discriminator
         self.optim_D = discriminator_optimizer
 
+        self.has_VIB = hasattr(self.model, 'VIB') and self.model.VIB.beta > 0
+
         def update_hook(norms):
             assert log_grad_norm in ["none", 'total', 'var']
             if log_grad_norm in ['total', 'var']:
@@ -421,11 +423,19 @@ class MetaTrainer(TrainerBase):
             self.optimizer.zero_grad()
 
             task_metrics = self.wrapper(tasks=sampled_task_generators, train=True, meta_train=True)
+
             losses = [list(map(lambda x: x["loss"], metrics)) for metrics in task_metrics]
             LASes = [list(map(lambda x: x["metric"]["LAS"], metrics)) for metrics in task_metrics]
-            KLDivs = [list(map(lambda x: x["metric"]["kl_div"], metrics)) for metrics in task_metrics]
 
-            for name, values in zip(["loss", "LAS", "KLDiv"], [losses, LASes, KLDivs]):
+            names = ["loss", "LAS"]
+            list_values = [losses, LASes]
+
+            if self.has_VIB:
+                KLDivs = [list(map(lambda x: x["metric"]["kl_div"], metrics)) for metrics in task_metrics]
+                names.append("KLDiv")
+                list_values.append(KLDivs)
+
+            for name, values in zip(names, list_values):
                 self._writer.log({f"step_{name}_{task}_{i}": value
                                   for task, task_values in zip(sampled_tasks, values)
                                   for i, value in enumerate(task_values)},
@@ -480,13 +490,13 @@ class MetaTrainer(TrainerBase):
                                  step=self._batch_num_total)
 
 
-            if hasattr(self.model, 'VIB'):
+            if self.has_VIB: 
                 kl_loss, kl_div, kl_div2 = ContinuousVIB.get_kl_loss(self.model, sampled_task_generators)
                 kl_loss.backward()
                 self._writer.log({"kl_loss": kl_loss.detach().item(),
                                   "kl_div": kl_div,
                                   "kl_div2": kl_div2},
-                                 step=self._batch_num_total)
+                                  step=self._batch_num_total)
 
             self.optimizer.step()
 
