@@ -12,7 +12,7 @@ import torch.optim as optim
 from allennlp.common import FromParams
 from allennlp.nn.activations import Activation
 
-from src.training.util import move_to_device
+from src.training.util import move_to_device, flatten
 
 SMALL = 1e-10
 class ContinuousEncoder(nn.Module):
@@ -213,9 +213,10 @@ class ContinuousVIB(nn.Module, FromParams):
     @staticmethod
     def get_kl_loss(generator, tasks):
         def get_hidden_states(task):
-            hidden_states = []
-            masks = []
-            labels = []
+            kl_losses = []
+            kl_divs = []
+            kl_div2s = []
+
             device = next(generator.parameters()).device
             for inputs in task:
                 inputs = move_to_device(inputs, device)
@@ -223,8 +224,14 @@ class ContinuousVIB(nn.Module, FromParams):
                 kl_loss = output_dict["kl_loss"]
                 kl_div = output_dict["kl_div"]
                 kl_div2 = output_dict["kl_div2"]
-                return kl_loss, kl_div, kl_div2
-        kl_losses, kl_divs, kl_div2s = zip(*map(get_hidden_states, tasks))
+                kl_losses.append(kl_loss)
+                kl_divs.append(kl_div)
+                kl_div2s.append(kl_div2)
+
+            return kl_losses, kl_divs, kl_div2s
+
+        kl_losses, kl_divs, kl_div2s = map(flatten, zip(*map(get_hidden_states, tasks)))
+
         kl_loss = sum(kl_losses) / len(kl_losses)
         kl_div = sum(kl_divs) / len(kl_divs)
         kl_div2 = sum(kl_div2s) / len(kl_div2s)
