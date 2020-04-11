@@ -12,6 +12,8 @@ import torch.optim as optim
 from allennlp.common import FromParams
 from allennlp.nn.activations import Activation
 
+from src.training.util import move_to_device
+
 SMALL = 1e-10
 class ContinuousEncoder(nn.Module):
     def __init__(
@@ -208,95 +210,22 @@ class ContinuousVIB(nn.Module, FromParams):
         return t, head_indices, head_tags, pos_tags, mask, total_loss, \
             kl_div.item(), kl_div2.item()
 
-
-    def anneal_clustering(self, decrease_rate, tag='beta'):
-        '''
-        This function aims to do annealing and gradually do more compression, by tuning the gamma and beta
-        to be larger. So, this is equivalent as annealing the inverse of the beta and gamma, and make them
-        smaller, we decide that the lower limit of this annealing is when beta = 10, that is, inv_beta = 0.1
-
-        :param decrease_rate:
-        :param tag:
-        :return:
-        '''
-        if tag == 'beta':
-            inv_beta = 1/self.beta
-            inv_beta = np.maximum(inv_beta * np.exp(-decrease_rate), self.min_inv_beta)
-            self.beta = np.asscalar(1/inv_beta)
-        elif tag == 'gamma':
-            inv_gamma = 1 / self.gamma
-            inv_gamma = np.maximum(inv_gamma * np.exp(-decrease_rate), self.min_inv_gamma)
-            self.gamma = np.asscalar(1 / inv_gamma)
-
-
-    def train_batch(self, corpus, sent_per_epoch, elmo_embeds,
-                        non_context_embeds, delta_temp=0.01 , tag=''):
-
-        shuffledData = corpus
-        shuffle_indices = np.random.choice(len(shuffledData), min(sent_per_epoch, len(shuffledData)), replace=False)
-        epoch_loss = 0
-        batch_total = 0
-
-        align_err_total, nlogp_total, word_total, sent_total, kl_total, kl_total2, label_LAS_total = 0,0,0,0,0,0,0
-        for iSentence, ind in enumerate(shuffle_indices):
-            x, tag_, y, y_label = shuffledData[ind]
-
-            bsz, seqlen = x.shape
-
-            result, err_total, accuracy_loss, length_total, sample_total, kl_loss, kl_loss2, label_LAS = \
-                self.forward_batch((x, y, y_label), type_embeds=elmo_embeds_, non_context_embeds=non_context_embeds_)
-            # average per batch, actually per token.
-            align_err_total += err_total
-            batch_total += 1
-            nlogp_total += accuracy_loss
-            label_LAS_total += label_LAS
-            kl_total += kl_loss
-
-            # average per sentence.
-            word_total += length_total * bsz
-            sent_total += bsz
-            kl_total2 += kl_loss2
-
-            result.backward()
-            self.optimizer_decoder.step()
-            self.optimizer_encoder.step()
-            if self.type_token_reg:
-                self.optimizer_var.step()
-                self.optimizer_var.zero_grad()
-            self.optimizer_decoder.zero_grad()
-            self.optimizer_encoder.zero_grad()
-            epoch_loss += result.item()
-
-            ''' min(args.kl_pen + args.delta_kl, 1) '''
-            self.temperature = np.maximum(self.temperature - delta_temp, self.min_temp)
-            self.encoder.temperature = self.temperature
-
-        avg_seqlen = word_total / sent_total
-        align_err_w = align_err_total / batch_total
-        nlogp_w = nlogp_total / batch_total
-        align_err_s = align_err_w * avg_seqlen
-        nlogp_s = nlogp_w * avg_seqlen
-        kl_s = kl_total / batch_total
-        kl_s2 = kl_total2 / batch_total
-        kl_w = kl_s / avg_seqlen
-        kl_w2 = kl_s2 / avg_seqlen
-        LAS = label_LAS_total / batch_total
-
-        print(
-            'Total: totalLoss_per_sent=%f, NLL=%.3f, KL=%.3f, KL2=%.3f, UAS=%.3f LAS=%.3f, beta=%f, gamma=%f, temp=%f'
-            % (epoch_loss / sent_total, nlogp_s, kl_s, kl_s2, 1 - align_err_w, LAS, self.beta, self.gamma,
-               self.temperature))
-
-        result_dict = {}
-        result_dict["align_err_w"] = align_err_w
-        result_dict["nlogp_w"] = nlogp_w
-        result_dict["align_err_s"] = align_err_s
-        result_dict["nlogp_s"] = nlogp_s
-        result_dict["kl_s"] = kl_s
-        result_dict["kl_s2"] = kl_s2
-        result_dict["kl_w"] = kl_w
-        result_dict["kl_w2"] = kl_w2
-
-        result_dict["LAS"] = LAS
-
-        return result_dict
+    @staticmethod
+    def get_kl_loss(generator, tasks):
+        def get_hidden_states(task):
+            hidden_states = []
+            masks = []
+            labels = []
+            device = next(generator.parameters()).device
+            for inputs in task:
+                inputs = move_to_device(inputs, device)
+                output_dict = generator(**inputs, variational=True)
+                kl_loss = output_dict["kl_loss"]
+                kl_div = output_dict["kl_div"]
+                kl_div2 = output_dict["kl_div2"]
+                return kl_loss, kl_div, kl_div2
+        kl_losses, kl_divs, kl_div2s = zip(*map(get_hidden_states, tasks))
+        kl_loss = sum(kl_losses) / len(kl_losses)
+        kl_div = sum(kl_divs) / len(kl_divs)
+        kl_div2 = sum(kl_div2s) / len(kl_div2s)
+        return kl_loss, kl_div, kl_div2

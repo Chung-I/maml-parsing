@@ -35,6 +35,7 @@ from src.training.tensorboard_writer import TensorboardWriter
 from src.training.wrapper import Wrapper
 from src.modules.adv import TaskDiscriminator
 from src.training.util import as_flat_dict, filter_state_dict
+from src.modules.vib import ContinuousVIB
 
 logger = logging.getLogger(__name__)
 
@@ -447,6 +448,7 @@ class MetaTrainer(TrainerBase):
 
             if self.task_D and self.optim_D:
                 # D training
+                self.optimizer.step()
                 steps_per_update = self.task_D.steps_per_update
                 if (batch_num_total - 1) % steps_per_update == 0:
                     self.optim_D.zero_grad()
@@ -477,11 +479,21 @@ class MetaTrainer(TrainerBase):
                 self._writer.log({"G_loss": g_loss.detach().item(), "alpha": alpha, "G_acc": acc},
                                  step=self._batch_num_total)
 
+
+            if hasattr(self.model, 'VIB'):
+                kl_loss, kl_div, kl_div2 = ContinuousVIB.get_kl_loss(self.model, sampled_task_generators)
+                kl_loss.backward()
+                self._writer.log({"kl_loss": kl_loss.detach().item(),
+                                  "kl_div": kl_div,
+                                  "kl_div2": kl_div2},
+                                 step=self._batch_num_total)
+
             self.optimizer.step()
 
             # Update moving averages
             if self._moving_average is not None:
                 self._moving_average.apply(batch_num_total)
+
 
             # Update the description with the latest metrics
             metrics = training_util.get_metrics(

@@ -224,8 +224,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         lemmas: TextFieldTensors = None,
         feats: TextFieldTensors = None,
         langs: torch.LongTensor = None,
-        #VIB: Optional[ContinuousVIB] = None,
         return_metric: bool = False,
+        variational: bool = False,
     ) -> Dict[str, torch.Tensor]:
 
         """
@@ -260,8 +260,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         embedded_text_input = self._input_dropout(embedded_text_input)
         encoded_text = self.encoder(embedded_text_input, mask)
 
-        sample_method = "iid" if self.training else "argmax"
-        sample_size = None if self.training else 1
+        sample_method = "iid" if variational else "argmax"
+        sample_size = None if variational else 1
 
         if self._per_lang_vib:
             r_mean = self.r_mean[langs]
@@ -276,11 +276,14 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             sample_method=sample_method, type_embeds=encoded_text, non_context_embeds=embedded_text_input
         )
 
+        if variational:
+            return {"kl_loss": kl_loss, "kl_div": kl_div, "kl_div2": kl_div2}
+
         predicted_heads, predicted_head_tags, mask, arc_nll, tag_nll = self._parse(
             encoded_text, mask, head_tags, head_indices
         )
 
-        loss = arc_nll + tag_nll + kl_loss
+        loss = arc_nll + tag_nll
 
         metric = None
         kl_div_score = self._lang_kl_divs[batch_lang]
