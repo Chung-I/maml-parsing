@@ -422,8 +422,9 @@ class MetaTrainer(TrainerBase):
             task_metrics = self.wrapper(tasks=sampled_task_generators, train=True, meta_train=True)
             losses = [list(map(lambda x: x["loss"], metrics)) for metrics in task_metrics]
             LASes = [list(map(lambda x: x["metric"]["LAS"], metrics)) for metrics in task_metrics]
+            KLDivs = [list(map(lambda x: x["metric"]["kl_div"], metrics)) for metrics in task_metrics]
 
-            for name, values in zip(["loss", "LAS"], [losses, LASes]):
+            for name, values in zip(["loss", "LAS", "KLDiv"], [losses, LASes, KLDivs]):
                 self._writer.log({f"step_{name}_{task}_{i}": value
                                   for task, task_values in zip(sampled_tasks, values)
                                   for i, value in enumerate(task_values)},

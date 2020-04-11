@@ -163,7 +163,7 @@ class TransformerEmbedder(TokenEmbedder):
         if self._scalar_mix is not None:
             embeddings = self._scalar_mix(layer_outputs, transformer_mask)
         elif self.combine_layers == "last":
-            embeddings = layers[-1]
+            embeddings = layer_outputs[-1]
         else:
             raise NotImplementedError
 

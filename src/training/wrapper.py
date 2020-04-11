@@ -125,6 +125,9 @@ class BaseWrapper(Wrapper):
         self.optimizer_cls = getattr(torch.optim, optimizer_cls)
         self.optimizer_kwargs = optimizer_kwargs
         self._update_hook = update_hook
+        self.forward_kwargs = {
+            'return_metric': True,
+        }
 
     @property
     def update_hook(self):
@@ -216,7 +219,7 @@ class BaseWrapper(Wrapper):
             inputs = move_to_device(inputs, device)
 
             # Evaluate model
-            output_dict = self._container(**inputs, return_metric=True)
+            output_dict = self.model(**inputs, **self.forward_kwargs)
             loss = output_dict["loss"]
             metric = output_dict["metric"]
             if torch.isnan(loss):
@@ -396,7 +399,7 @@ class MAMLWrapper(Wrapper):
         grad_clipping: Optional[float] = None,
         update_hook: Callable = None,
     ):
-        super(MAMLWrapper, self).__init__()
+        super().__init__()
         self._counter = 0
         self.model = model
         self.meta_optimizer = meta_optimizer
@@ -404,6 +407,9 @@ class MAMLWrapper(Wrapper):
             self.model.parameters(),
             **optimizer_kwargs
         )
+        self.forward_kwargs = {
+            'return_metric': True,
+        }
         self._shuffler_factory: Dict[str, Callable] = {}
         for namespace in shuffle_label_namespaces:
             num_labels = self.model.vocab.get_vocab_size(namespace)
@@ -447,7 +453,7 @@ class MAMLWrapper(Wrapper):
             for n, inputs in enumerate(batches[:-1]):
                 inputs = self.shuffle_labels(inputs, shufflers)
                 inputs = move_to_device(inputs, device)
-                output_dict = self.model(**inputs, return_metric=True)
+                output_dict = fmodel(**inputs, **self.forward_kwargs)
                 loss = output_dict["loss"]
                 metric = output_dict["metric"]
                 diffopt.step(loss)
@@ -455,7 +461,7 @@ class MAMLWrapper(Wrapper):
 
             inputs = self.shuffle_labels(batches[-1], shufflers)
             inputs = move_to_device(inputs, device)
-            output_dict = self.model(**inputs, return_metric=True)
+            output_dict = fmodel(**inputs, **self.forward_kwargs)
             loss = output_dict["loss"]
             metric = output_dict["metric"]
             loss.backward()

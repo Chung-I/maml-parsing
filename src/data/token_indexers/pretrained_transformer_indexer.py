@@ -164,7 +164,7 @@ class PretrainedTransformerIndexer(TokenIndexer):
         # Strips original special tokens
         indices = indices[self._num_added_start_tokens : -self._num_added_end_tokens]
         full_seq_len = len(indices)
-        too_long = full_seq_len > self._effective_max_length
+        too_long = self._max_length is not None and full_seq_len > self._effective_max_length
         if too_long:
             # We prepare long indices by converting them to (assuming max_length == 5)
             # [CLS] A B C [SEP] [CLS] D E F [SEP] ...
