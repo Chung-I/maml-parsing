@@ -37,11 +37,13 @@ class Wrapper(Registrable, FromParams):
 class MultiWrapper(Wrapper):
     def __init__(self,
                  model: Model,
-                 optimizer: torch.optim.Optimizer):
+                 meta_optimizer: torch.optim.Optimizer):
         super(MultiWrapper, self).__init__()
         self._counter = 0
         self.model = model
-        self.optimizer = optimizer
+        self.forward_kwargs = {
+            'return_metric': True,
+        }
 
     @property
     def container(self):
@@ -49,13 +51,13 @@ class MultiWrapper(Wrapper):
 
     def __call__(self, tasks, train=True, meta_train=False):
         # argument key meta_train is dummy
-        total_loss = 0.0
+        metrics = []
         self._counter = len(tasks)
         for task in tasks:
-            task_loss = self.run_task(task, train=train)
-            total_loss += task_loss
+            metric = self.run_task(task, train=train)
+            metrics.append(metric)
 
-        return total_loss
+        return metrics
 
     def run_task(self, task, train):
         if train:
@@ -65,32 +67,25 @@ class MultiWrapper(Wrapper):
         return self.run_batches(task, train=train)
 
     def run_batches(self, batches, train=False):
-        train_loss = 0.0
+        metrics = []
         device = next(self.model.parameters()).device
 
         for n, inputs in enumerate(batches):
             inputs = move_to_device(inputs, device)
 
-            output_dict = self.model(**inputs)
+            output_dict = self.model(**inputs, **self.forward_kwargs)
             loss = output_dict["loss"]
+            metric = output_dict["metric"]
+
+            if torch.isnan(loss):
+                raise ValueError("nan loss encountered")
+
+            metrics.append({"loss": loss.item(), "metric": metric})
             loss = loss / len(batches)
             loss = loss / self._counter
-            train_loss += loss.item()
-            if not train:
-                continue
             loss.backward()
 
-        return train_loss
-
-    @classmethod
-    def from_params(
-        cls,
-        model: Model,
-        meta_optimizer: torch.optim.Optimizer,
-        params: Params,
-    ) -> "Wrapper":
-        params.assert_empty(cls.__name__)
-        return  cls(model, meta_optimizer)
+        return metrics
 
 
 @Wrapper.register("default")
@@ -219,7 +214,7 @@ class BaseWrapper(Wrapper):
             inputs = move_to_device(inputs, device)
 
             # Evaluate model
-            output_dict = self.model(**inputs, **self.forward_kwargs)
+            output_dict = self._container(**inputs, **self.forward_kwargs)
             loss = output_dict["loss"]
             metric = output_dict["metric"]
             if torch.isnan(loss):
