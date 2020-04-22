@@ -87,7 +87,6 @@ class ContinuousVIB(nn.Module, FromParams):
         self,
         tag_dim: int,
         embedding_dim: int,
-        encoder_output_dim: int,
         activation: str = "elu",
         max_sent_len: int = 512,
         beta: float = 0.1,
@@ -104,8 +103,7 @@ class ContinuousVIB(nn.Module, FromParams):
         self.max_sent_len = max_sent_len
         self.tag_dim = tag_dim
         self.embedding_dim = embedding_dim
-        self.encoder_output_dim = encoder_output_dim
-        self.hidden_dim = encoder_output_dim
+        self.hidden_dim = int((embedding_dim + tag_dim) / 2)
         self.sample_size = sample_size
         self.sample_method = sample_method
         self.type_token_reg = type_token_reg
@@ -126,7 +124,7 @@ class ContinuousVIB(nn.Module, FromParams):
             self.hidden_dim,
             self.tag_dim,
             activation,
-            self.encoder_output_dim,
+            self.embedding_dim,
         )
         ## TODO: could swap the decoder here.
         if self.type_token_reg:

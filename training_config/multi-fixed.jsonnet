@@ -7,7 +7,7 @@
 local MAX_LEN = 512;
 local MODEL_NAME = "xlm-roberta-base";
 local NUM_EPOCHS = 10;
-local HIDDEN_SIZE = 400;
+local HIDDEN_SIZE = 128;
 local BIDIR = true;
 local NUM_DIRS = if BIDIR then 2 else 1;
 local TAG_DIM = 256;
@@ -47,20 +47,24 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 8,
+        "batch_size": 16,
         "sorting_keys": [["words", "roberta___mask"]],
         "instances_per_epoch": 160000,
     },
     "model": {
         "type": "ud_biaffine_parser_multilang_vib",
         "arc_representation_dim": 100,
-        "dropout": 0.0,
-        "word_dropout": 0.0,
-        "input_dropout": 0.0,
+        "dropout": 0.33,
+        "word_dropout": 1.0,
+        "input_dropout": 0.33,
         "tag_dim": TAG_DIM,
         "encoder": {
-            "type": "pass_through",
-            "input_dim": 868,
+            "type": "lstm",
+            "hidden_size": HIDDEN_SIZE,
+            "input_size": 256,
+            "num_layers": 3,
+            "dropout": 0.0,
+            "bidirectional": BIDIR,
         },
         "pos_tag_embedding": {
             "embedding_dim": 100,
@@ -121,7 +125,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "validation_metric": "+LAS_AVG",
         "save_embedder": false,
         "num_serialized_models_to_keep": -1,
-        "num_gradient_accumulation_steps": 2,
+        "num_gradient_accumulation_steps": 1,
         "tasks_per_step": 10,
         "wrapper": {
             "type": "multi",

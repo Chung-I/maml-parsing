@@ -321,7 +321,7 @@ class Trainer(TrainerBase):
         """
         Trains one epoch and returns metrics.
         """
-        logger.info("Epoch %d/%d", epoch, self._num_epochs - 1)
+        logger.info("Epoch %d/%d", epoch, self._num_epochs)
         peak_cpu_usage = peak_memory_mb()
         logger.info(f"Peak CPU memory usage MB: {peak_cpu_usage}")
         gpu_usage = []
@@ -522,9 +522,10 @@ class Trainer(TrainerBase):
         if isinstance(self._learning_rate_scheduler, SlantedTriangular):
             self._learning_rate_scheduler.num_steps_per_epoch = num_training_batches
 
-        for epoch in range(epoch_counter, self._num_epochs):
+        for epoch in range(epoch_counter, self._num_epochs + 1):
             epoch_start_time = time.time()
-            train_metrics = self._train_epoch(epoch)
+            if epoch > 0:
+                train_metrics = self._train_epoch(epoch)
 
             # get peak of memory usage
             if "cpu_memory_MB" in train_metrics:
@@ -598,9 +599,9 @@ class Trainer(TrainerBase):
 
             # The Scheduler API is agnostic to whether your schedule requires a validation metric -
             # if it doesn't, the validation metric passed here is ignored.
-            if self._learning_rate_scheduler:
+            if self._learning_rate_scheduler and epoch > 0:
                 self._learning_rate_scheduler.step(this_epoch_val_metric, epoch)
-            if self._momentum_scheduler:
+            if self._momentum_scheduler and epoch > 0:
                 self._momentum_scheduler.step(this_epoch_val_metric, epoch)
 
             if self._master:
@@ -613,15 +614,16 @@ class Trainer(TrainerBase):
             epoch_elapsed_time = time.time() - epoch_start_time
             logger.info("Epoch duration: %s", datetime.timedelta(seconds=epoch_elapsed_time))
 
-            if epoch < self._num_epochs - 1:
+            if epoch < self._num_epochs and epoch > 0:
                 training_elapsed_time = time.time() - training_start_time
                 estimated_time_remaining = training_elapsed_time * (
-                    (self._num_epochs - epoch_counter) / float(epoch - epoch_counter + 1) - 1
+                    (self._num_epochs - epoch_counter) / float(epoch - epoch_counter) - 1
                 )
                 formatted_time = str(datetime.timedelta(seconds=int(estimated_time_remaining)))
                 logger.info("Estimated training time remaining: %s", formatted_time)
 
-            epochs_trained += 1
+            if epoch > 0:
+                epochs_trained += 1
 
         # Load the best model state before returning
         best_model_state = self._checkpointer.best_model_state()

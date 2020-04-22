@@ -23,7 +23,8 @@ local BASE_READER(x, alternate=true) = {
         }
     },
     "read_language": false,
-    "use_language_specific_pos": false
+    "use_language_specific_pos": false,
+    "deprel_file": "data/vocabulary/head_tags.txt",
 };
 
 local LANG = std.extVar("FT_LANG");

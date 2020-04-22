@@ -1,0 +1,7 @@
+{
+    "model": {
+        "dropout": 0.33,
+        "word_dropout": 0.33,
+        "input_dropout": 0.33
+    }
+}

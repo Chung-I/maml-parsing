@@ -155,12 +155,12 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         if pos_tag_embedding is not None:
             representation_dim += pos_tag_embedding.get_output_dim()
 
-        check_dimensions_match(
-            representation_dim,
-            encoder.get_input_dim(),
-            "text field embedding dim",
-            "encoder input dim",
-        )
+        # check_dimensions_match(
+        #     representation_dim,
+        #     encoder.get_input_dim(),
+        #     "text field embedding dim",
+        #     "encoder input dim",
+        # )
 
         check_dimensions_match(
             tag_representation_dim,
@@ -207,8 +207,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         if vib is not None:
             self.VIB = ContinuousVIB.from_params(
                 Params(vib),
-                embedding_dim=encoder.get_input_dim(),
-                encoder_output_dim=encoder.get_output_dim()
+                embedding_dim=representation_dim,
             )
         
         initializer(self)
@@ -258,7 +257,6 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             raise ConfigurationError("Model uses a POS embedding, but no POS tags were passed.")
 
         embedded_text_input = self._input_dropout(embedded_text_input)
-        encoded_text = self.encoder(embedded_text_input, mask)
 
         sample_method = "iid" if variational else "argmax"
         sample_size = None if variational else 1
@@ -267,14 +265,16 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             r_mean = self.r_mean[langs]
             r_std = self.r_std[langs]
         else:
-            bsz = langs.size(0)
+            bsz = embedded_text_input.size(0)
             r_mean = self.r_mean.unsqueeze(0).repeat(bsz, 1, 1)
             r_std = self.r_std.unsqueeze(0).repeat(bsz, 1, 1) 
 
-        encoded_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = self.VIB(
+        embedded_text_input, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = self.VIB(
             head_indices, head_tags, pos_tags, mask, r_mean, r_std, sample_size=sample_size,
-            sample_method=sample_method, type_embeds=encoded_text, non_context_embeds=embedded_text_input
+            sample_method=sample_method, type_embeds=embedded_text_input,
         )
+
+        encoded_text = self.encoder(embedded_text_input, mask)
 
         if variational:
             return {"kl_loss": kl_loss, "kl_div": kl_div, "kl_div2": kl_div2}

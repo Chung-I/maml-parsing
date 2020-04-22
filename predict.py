@@ -46,8 +46,7 @@ if not os.path.isfile(archive_dir / "best.th"):
 
 config_file = archive_dir / "config.json"
 overrides = {"dataset_reader": {"read_dependencies": False},
-             "validation_dataset_reader": {"read_dependencies": False},
-             "trainer": {"cuda_device": -1}}
+             "validation_dataset_reader": {"read_dependencies": False}}
 configs = [Params(overrides), Params.from_file(config_file)]
 params = util.merge_configs(configs)
 if params["model"]["type"] == "from_archive":
