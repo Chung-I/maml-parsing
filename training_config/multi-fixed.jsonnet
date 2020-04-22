@@ -55,7 +55,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "type": "ud_biaffine_parser_multilang_vib",
         "arc_representation_dim": 100,
         "dropout": 0.33,
-        "word_dropout": 1.0,
+        "word_dropout": 0.33,
         "input_dropout": 0.33,
         "tag_dim": TAG_DIM,
         "encoder": {
