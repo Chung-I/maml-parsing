@@ -108,6 +108,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         dropout: float = 0.0,
         input_dropout: float = 0.0,
         word_dropout: float = 0.0,
+        lexical_dropout: float = 0.0,
+        pos_dropout: float = 0.0,
         max_sent_len: int = 512,
         tag_dim: int = 128,
         per_lang_vib: bool = True,
@@ -149,6 +151,9 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         self._dropout = InputVariationalDropout(dropout)
         self._input_dropout = Dropout(input_dropout)
         self._word_dropout = word_dropout
+        self._lexical_dropout = lexical_dropout if lexical_dropout > 0 else word_dropout
+        self._pos_dropout = pos_dropout if pos_dropout > 0 else word_dropout
+
         self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, tag_dim]))
 
         representation_dim = text_field_embedder.get_output_dim()
@@ -245,11 +250,11 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 raise ConfigurationError("Two languages in the same batch.")
 
         mask = get_text_field_mask(words)
-        self._apply_token_dropout(words)
+        self._apply_token_dropout(words, self._lexical_dropout)
         embedded_text_input = self.text_field_embedder(words, lang=batch_lang)
         if pos_tags is not None and self._pos_tag_embedding is not None:
             pos_tags_dict = {"tokens": pos_tags, "mask": mask}
-            self._apply_token_dropout(pos_tags_dict)
+            self._apply_token_dropout(pos_tags_dict, self._pos_dropout)
             pos_tags = pos_tags_dict["tokens"]
             embedded_pos_tags = self._pos_tag_embedding(pos_tags)
             embedded_text_input = torch.cat([embedded_text_input, embedded_pos_tags], -1)
@@ -337,7 +342,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         return output_dict
 
-    def _apply_token_dropout(self, words):
+    def _apply_token_dropout(self, words, dropout):
         # Word dropout
 
         def mask_words(tokens, drop_mask, drop_token):
@@ -346,7 +351,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         if "tokens" in words:
             drop_mask = self._get_dropout_mask(words["mask"].bool(),
-                                               p=self._word_dropout,
+                                               p=dropout,
                                                training=self.training)
             drop_token = self.vocab.get_token_index(self.vocab._oov_token)
             words["tokens"] = mask_words(words["tokens"], drop_mask, drop_token)
@@ -365,7 +370,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         if "roberta" in words:
             drop_mask = self._get_dropout_mask(words["roberta"]["mask"].bool(),
-                                               p=self._word_dropout,
+                                               p=dropout,
                                                training=self.training)
             drop_token = self._tokenizer.encode("<mask>", add_special_tokens=False)[0]
             words["roberta"]["token_ids"] = mask_subwords(words["roberta"],
