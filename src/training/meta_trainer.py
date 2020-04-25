@@ -456,6 +456,16 @@ class MetaTrainer(TrainerBase):
             if self._momentum_scheduler:
                 self._momentum_scheduler.step_batch(batch_num_total)
 
+            # variational information bottleneck / meta-learning without memorization
+            if self.has_VIB:
+                kl_loss, kl_div, kl_div2 = ContinuousVIB.get_kl_loss(self.model, sampled_task_generators)
+                kl_loss.backward()
+                self._writer.log({"kl_loss": kl_loss.detach().item(),
+                                  "kl_div": kl_div,
+                                  "kl_div2": kl_div2},
+                                  step=self._batch_num_total)
+
+            # adversarial training
             if self.task_D and self.optim_D:
                 # D training
                 self.optimizer.step()
@@ -489,14 +499,6 @@ class MetaTrainer(TrainerBase):
                 self._writer.log({"G_loss": g_loss.detach().item(), "alpha": alpha, "G_acc": acc},
                                  step=self._batch_num_total)
 
-
-            if self.has_VIB: 
-                kl_loss, kl_div, kl_div2 = ContinuousVIB.get_kl_loss(self.model, sampled_task_generators)
-                kl_loss.backward()
-                self._writer.log({"kl_loss": kl_loss.detach().item(),
-                                  "kl_div": kl_div,
-                                  "kl_div2": kl_div2},
-                                  step=self._batch_num_total)
 
             self.optimizer.step()
 
