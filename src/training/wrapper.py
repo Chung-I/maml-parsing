@@ -442,25 +442,26 @@ class MAMLWrapper(Wrapper):
         metrics = []
         device = next(self.model.parameters()).device
         shufflers = {key: shuffler() for key, shuffler in self._shuffler_factory.items()}
-        with higher.innerloop_ctx(
-            self.model, self.inner_optimizer, copy_initial_weights=False
-        ) as (fmodel, diffopt):
-            for n, inputs in enumerate(batches[:-1]):
-                inputs = self.shuffle_labels(inputs, shufflers)
+        with torch.backends.cudnn.flags(enabled=False):
+            with higher.innerloop_ctx(
+                self.model, self.inner_optimizer, copy_initial_weights=False
+            ) as (fmodel, diffopt):
+                for n, inputs in enumerate(batches[:-1]):
+                    inputs = self.shuffle_labels(inputs, shufflers)
+                    inputs = move_to_device(inputs, device)
+                    output_dict = fmodel(**inputs, **self.forward_kwargs)
+                    loss = output_dict["loss"]
+                    metric = output_dict["metric"]
+                    diffopt.step(loss)
+                    metrics.append({"loss": loss.item(), "metric": metric})
+
+                inputs = self.shuffle_labels(batches[-1], shufflers)
                 inputs = move_to_device(inputs, device)
                 output_dict = fmodel(**inputs, **self.forward_kwargs)
                 loss = output_dict["loss"]
                 metric = output_dict["metric"]
-                diffopt.step(loss)
+                loss.backward()
                 metrics.append({"loss": loss.item(), "metric": metric})
-
-            inputs = self.shuffle_labels(batches[-1], shufflers)
-            inputs = move_to_device(inputs, device)
-            output_dict = fmodel(**inputs, **self.forward_kwargs)
-            loss = output_dict["loss"]
-            metric = output_dict["metric"]
-            loss.backward()
-            metrics.append({"loss": loss.item(), "metric": metric})
 
         return metrics
 
