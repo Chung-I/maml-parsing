@@ -7,10 +7,10 @@
 local MAX_LEN = 512;
 local MODEL_NAME = "xlm-roberta-base";
 local NUM_EPOCHS = 10;
-local HIDDEN_SIZE = 400;
-local ADV_HIDDEN = 128;
+local HIDDEN_SIZE = 128;
 local BIDIR = true;
 local NUM_DIRS = if BIDIR then 2 else 1;
+local TAG_DIM = 256;
 
 local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
@@ -26,7 +26,8 @@ local BASE_READER(x, alternate=true) = {
             "max_length": MAX_LEN,
         }
     },
-    "use_language_specific_pos": false
+    "use_language_specific_pos": false,
+    "use_language_specific_deprel": false,
 };
 
 local TRAIN_LANGS = ['af', 'grc', 'pt', 'sv', 'no', 'es', 'zh', 'fro', 'ja', 'tr', 'hi', 'ar', 'ca', 'hr', 'el', 'hu', 'la', 'fr', 'fi', 'eu', 'ko', 'et', 'id', 'fa', 'uk', 'got', 'pl', 'ug', 'vi', 'da', 'ru', 'gl', 'it', 'cu', 'cs', 'he', 'sr', 'en', 'sk', 'bg', 'sl', 'ur', 'nl', 'lv', 'de', 'ro'];
@@ -46,30 +47,40 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 4,
+        "batch_size": 8,
         "sorting_keys": [["words", "roberta___mask"]],
-        "instances_per_epoch": 160000,
+        "instances_per_epoch": 80000,
     },
     "model": {
-        "type": "ud_biaffine_parser_multilang",
-        "arc_representation_dim": 500,
+        "type": "ud_biaffine_parser_multilang_vib",
+        "arc_representation_dim": 100,
         "dropout": 0.33,
-        "word_dropout": 0.33,
+        "lexical_dropout": 0.33,
+        "pos_dropout": 0.33,
         "input_dropout": 0.33,
+        "tag_dim": TAG_DIM,
         "encoder": {
             "type": "lstm",
             "hidden_size": HIDDEN_SIZE,
-            "input_size": 868,
+            "input_size": 256,
             "num_layers": 3,
             "dropout": 0.0,
             "bidirectional": BIDIR,
         },
-        "langs_for_early_stop": TRAIN_LANGS,
         "pos_tag_embedding": {
             "embedding_dim": 100,
             "vocab_namespace": "pos"
         },
-        "tag_representation_dim": 100,
+        "vib": {
+          "activation": "leaky_relu",
+          "tag_dim": TAG_DIM,
+          "type_token_reg": false,
+          "sample_size": 5,
+          "beta": 0.0,
+        },
+        "per_lang_vib": false,
+        "langs_for_early_stop": TRAIN_LANGS,
+        "tag_representation_dim": 50,
         "model_name": MODEL_NAME,
         "text_field_embedder": {
             "token_embedders": {
@@ -78,11 +89,25 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
                     "model_name": "xlm-roberta-base",
                     "requires_grad": false,
                     "max_length": MAX_LEN,
-                    "layer_dropout": 0.1,
-                    "dropout": 0.1,
+                    "layer_dropout": 0.0,
+                    "dropout": 0.0,
+                    "combine_layers": "last",
                 }
             }
-        }
+        },
+        "initializer": [
+          [".*VIB.*encoder.*weight", {"type": "xavier_uniform"}],
+          [".*VIB.*encoder.*bias", {"type": "zero"}],
+          [".*r_mean", {"type": "xavier_uniform"}],
+          [".*r_std", {"type": "uniform"}],
+          [".*projection.*weight", {"type": "xavier_uniform"}],
+          [".*projection.*bias", {"type": "zero"}],
+          [".*tag_bilinear.*weight", {"type": "xavier_uniform"}],
+          [".*tag_bilinear.*bias", {"type": "zero"}],
+          [".*weight_ih.*", {"type": "xavier_uniform"}],
+          [".*weight_hh.*", {"type": "orthogonal"}],
+          [".*bias_ih.*", {"type": "zero"}],
+          [".*bias_hh.*", {"type": "lstm_hidden_bias"}]]
     },
     // UDTB v2.0 is available at https://github.com/ryanmcd/uni-dep-tb
     // Set TRAIN_PATHNAME='std/**/*train.conll'
@@ -101,14 +126,15 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "validation_metric": "+LAS_AVG",
         "save_embedder": false,
         "num_serialized_models_to_keep": -1,
-        "num_gradient_accumulation_steps": 4,
+        "num_gradient_accumulation_steps": 2,
         "tasks_per_step": 10,
         "wrapper": {
             "type": "fomaml",
             "optimizer_cls": "Adam",
             "optimizer_kwargs": {
                 "lr": 3e-4
-            }
+            },
+            // "shuffle_label_namespaces": ["head_tags"],
         },
         "task_discriminator": {
           "encoder": {
@@ -116,8 +142,9 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
             "embedding_dim": HIDDEN_SIZE * NUM_DIRS,
             "num_filters": 128,
           },
-          "first_n_states": 4,
-          "steps_per_update": 1,
+          "first_n_states": 2,
+          "steps_per_update": 5,
+          "weight": 0.01,
         },
         "discriminator_optimizer": {
           "type": "sgd",
