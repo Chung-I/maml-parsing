@@ -113,6 +113,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         max_sent_len: int = 512,
         tag_dim: int = 128,
         per_lang_vib: bool = True,
+        adv_layer: str = 'encoder',
         initializer: InitializerApplicator = InitializerApplicator(),
         regularizer: Optional[RegularizerApplicator] = None,
     ) -> None:
@@ -208,6 +209,9 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         else:
             self.r_mean = torch.nn.Parameter(torch.randn(max_sent_len, tag_dim))
             self.r_std = torch.nn.Parameter(torch.randn(max_sent_len, tag_dim))
+
+        assert adv_layer in ['vib', 'encoder']
+        self._adv_layer = adv_layer
 
         if vib is not None:
             self.VIB = ContinuousVIB.from_params(
@@ -311,8 +315,10 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 kl_div_metric = kl_div_score.get_metric(reset=True)
                 metric.update({"kl_div": kl_div_metric})
 
+        hidden_state = encoded_text if self._adv_layer == "encoder" else embedded_text_input
+
         output_dict = {
-            "hidden_state": encoded_text,
+            "hidden_state": hidden_state,
             "heads": predicted_heads,
             "head_tags": predicted_head_tags,
             "arc_loss": arc_nll,
