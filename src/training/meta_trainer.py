@@ -478,10 +478,14 @@ class MetaTrainer(TrainerBase):
                     )
                     D_loss, _, acc = self.task_D(hidden_states, labels, masks, detach=True)
                     D_loss.backward()
+                    disc_grad_norm = training_util.rescale_gradients(self.task_D, self.task_D.disc_grad_norm)
                     self.optim_D.step()
                     self._writer.log({"D_loss": D_loss.detach().item(),
                                       "D_acc": acc},
                                      step=self._batch_num_total)
+                    if disc_grad_norm:
+                        self._writer.log({"D_grad_norm": disc_grad_norm.detach().item()},
+                                         step=self._batch_num_total)
 
                 # G training
                 hidden_states, labels, masks = self.task_D.get_hidden_states(
@@ -496,9 +500,12 @@ class MetaTrainer(TrainerBase):
                                                   num_training_batches[0] * self._num_epochs)
                 G_loss = -alpha * g_loss
                 G_loss.backward()
+                gen_grad_norm = training_util.rescale_gradients(self.model, self.task_D.gen_grad_norm)
                 self._writer.log({"G_loss": g_loss.detach().item(), "alpha": alpha, "G_acc": acc},
                                  step=self._batch_num_total)
-
+                if gen_grad_norm:
+                    self._writer.log({"G_grad_norm": gen_grad_norm.detach().item()},
+                                     step=self._batch_num_total)
 
             self.optimizer.step()
 

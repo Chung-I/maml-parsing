@@ -6,7 +6,7 @@
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
 local MODEL_NAME = "xlm-roberta-base";
-local NUM_EPOCHS = 10;
+local NUM_EPOCHS = 20;
 local HIDDEN_SIZE = 128;
 local BIDIR = true;
 local NUM_DIRS = if BIDIR then 2 else 1;
@@ -79,6 +79,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
           "beta": 0.0,
         },
         "per_lang_vib": false,
+        "adv_layer": "vib",
         "langs_for_early_stop": TRAIN_LANGS,
         "tag_representation_dim": 50,
         "model_name": MODEL_NAME,
@@ -142,9 +143,11 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
             "embedding_dim": HIDDEN_SIZE * NUM_DIRS,
             "num_filters": 128,
           },
+          "gen_grad_norm": 5.0,
+          "disc_grad_norm": 5.0,
           "first_n_states": 2,
-          "steps_per_update": 5,
-          "weight": 0.01,
+          "steps_per_update": 1,
+          "weight": 0.1,
         },
         "discriminator_optimizer": {
           "type": "sgd",

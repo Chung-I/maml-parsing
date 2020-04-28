@@ -17,12 +17,16 @@ class TaskDiscriminator(nn.Module, FromParams):
                  encoder: Seq2VecEncoder,
                  first_n_states: int = 1,
                  weight: float = None,
+                 disc_grad_norm: float = None,
+                 gen_grad_norm: float = None,
                  steps_per_update: int = 5,
                  target_distribution: str = 'uniform',
                  num_tasks: int = 1):
         super().__init__()
         self.first_n_states = first_n_states
         self.weight = weight
+        self.disc_grad_norm = disc_grad_norm
+        self.gen_grad_norm = gen_grad_norm
         self._encoder = encoder
         self.steps_per_update = steps_per_update
         self._projection = FeedForward(
