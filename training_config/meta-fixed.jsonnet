@@ -47,7 +47,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 4,
+        "batch_size": 2,
         "sorting_keys": [["words", "roberta___mask"]],
         "instances_per_epoch": 160000,
     },
@@ -76,7 +76,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
           "tag_dim": TAG_DIM,
           "type_token_reg": false,
           "sample_size": 5,
-          "beta": 1e-3,
+          "beta": 0.0,
         },
         "per_lang_vib": false,
         "langs_for_early_stop": TRAIN_LANGS,
@@ -126,7 +126,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "validation_metric": "+LAS_AVG",
         "save_embedder": false,
         "num_serialized_models_to_keep": -1,
-        "num_gradient_accumulation_steps": 4,
+        "num_gradient_accumulation_steps": 8,
         "tasks_per_step": 10,
         "wrapper": {
             "type": "fomaml",
