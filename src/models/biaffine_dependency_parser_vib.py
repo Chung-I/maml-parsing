@@ -21,6 +21,7 @@ from allennlp.nn.util import get_text_field_mask, get_range_vector
 from allennlp.nn.util import (
     get_device_of,
     masked_log_softmax,
+    masked_mean,
     get_lengths_from_binary_sequence_mask,
     batched_span_select,
 )
@@ -29,6 +30,7 @@ from allennlp.training.metrics import AttachmentScores, Average
 
 from src.models.biaffine_dependency_parser import BiaffineDependencyParser
 from src.modules.vib import ContinuousVIB
+from src.training.util import get_lang_means, get_lang_mean
 
 logger = logging.getLogger(__name__)
 
@@ -109,11 +111,14 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         input_dropout: float = 0.0,
         word_dropout: float = 0.0,
         lexical_dropout: float = 0.0,
+        dropout_location: str = 'input',
         pos_dropout: float = 0.0,
         max_sent_len: int = 512,
         tag_dim: int = 128,
         per_lang_vib: bool = True,
         adv_layer: str = 'encoder',
+        lang_mean_regex: str = None,
+        ft_lang_mean_dir: str = None,
         initializer: InitializerApplicator = InitializerApplicator(),
         regularizer: Optional[RegularizerApplicator] = None,
     ) -> None:
@@ -154,6 +159,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         self._word_dropout = word_dropout
         self._lexical_dropout = lexical_dropout if lexical_dropout > 0 else word_dropout
         self._pos_dropout = pos_dropout if pos_dropout > 0 else word_dropout
+        assert dropout_location in ['input', 'lm']
+        self._dropout_location = dropout_location
 
         self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, tag_dim]))
 
@@ -210,6 +217,17 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             self.r_mean = torch.nn.Parameter(torch.randn(max_sent_len, tag_dim))
             self.r_std = torch.nn.Parameter(torch.randn(max_sent_len, tag_dim))
 
+        self._lang_means = None
+        if lang_mean_regex is not None:
+            lang_means = get_lang_means(lang_mean_regex, self.vocab)
+            self._lang_means = torch.nn.Parameter(lang_means, requires_grad=False)
+
+        self._ft_lang_mean = None
+        if ft_lang_mean_dir is not None:
+            ft_lang_mean = get_lang_mean(ft_lang_mean_dir)
+            self._ft_lang_mean = torch.nn.Parameter(ft_lang_mean, requires_grad=False)
+            
+
         assert adv_layer in ['vib', 'encoder']
         self._adv_layer = adv_layer
 
@@ -254,12 +272,34 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 raise ConfigurationError("Two languages in the same batch.")
 
         mask = get_text_field_mask(words)
-        self._apply_token_dropout(words, self._lexical_dropout)
+        if self._dropout_location == 'input':
+            words["roberta"]["token_ids"] = self._apply_token_dropout(
+                words["roberta"]["token_ids"],
+                words["roberta"]["mask"],
+                self._lexical_dropout,
+                words["roberta"]["offsets"],
+                form='subword',
+            )
+
         embedded_text_input = self.text_field_embedder(words, lang=batch_lang)
+        if self._lang_means is not None:
+            batch_size, seq_len, _ = embedded_text_input.size()
+            if langs is None:
+                means = self._ft_lang_mean.view(1, 1, -1).repeat(batch_size, seq_len, 1)
+            else:
+                expanded_langs = langs.unsqueeze(-1).repeat(1, seq_len)
+                means = self._lang_means[expanded_langs] 
+            embedded_text_input = embedded_text_input - means
+        if self._dropout_location == 'lm':
+            embedded_text_input = self._apply_token_dropout(embedded_text_input,
+                                                            mask,
+                                                            self._lexical_dropout,
+                                                            form='tensor')
         if pos_tags is not None and self._pos_tag_embedding is not None:
-            pos_tags_dict = {"tokens": pos_tags, "mask": mask}
-            self._apply_token_dropout(pos_tags_dict, self._pos_dropout)
-            pos_tags = pos_tags_dict["tokens"]
+            pos_tags = self._apply_token_dropout(pos_tags,
+                                                 mask,
+                                                 self._pos_dropout,
+                                                 form='word')
             embedded_pos_tags = self._pos_tag_embedding(pos_tags)
             embedded_text_input = torch.cat([embedded_text_input, embedded_pos_tags], -1)
         elif self._pos_tag_embedding is not None:
@@ -348,23 +388,30 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         return output_dict
 
-    def _apply_token_dropout(self, words, dropout):
+    def _apply_token_dropout(self, words, mask, dropout, offsets = None, form = 'subword'):
         # Word dropout
 
         def mask_words(tokens, drop_mask, drop_token):
             drop_fill = tokens.new_empty(tokens.size()).long().fill_(drop_token)
             return torch.where(drop_mask, drop_fill, tokens)
 
-        if "tokens" in words:
-            drop_mask = self._get_dropout_mask(words["mask"].bool(),
+        if form == "tensor":
+            assert isinstance(words, torch.Tensor)
+            drop_mask = self._get_dropout_mask(mask.bool(),
+                                               p=dropout,
+                                               training=self.training)
+            mean = masked_mean(words, mask=mask.unsqueeze(-1), dim=(0,1), keepdim=True)
+            expanded_mean = mean.expand_as(words)
+            words = torch.where(drop_mask.unsqueeze(-1), expanded_mean, words)
+
+        if form == "word":
+            drop_mask = self._get_dropout_mask(mask.bool(),
                                                p=dropout,
                                                training=self.training)
             drop_token = self.vocab.get_token_index(self.vocab._oov_token)
-            words["tokens"] = mask_words(words["tokens"], drop_mask, drop_token)
+            words = mask_words(words, drop_mask, drop_token)
 
-        def mask_subwords(words, drop_mask, drop_token):
-            token_ids = words["token_ids"]
-            offsets = words["offsets"]
+        def mask_subwords(token_ids, offsets, drop_mask, drop_token):
             subword_drop_mask = token_ids.new_zeros(token_ids.size()).bool()
             batch_size, seq_len, _ = offsets.size()
             for i in range(batch_size):
@@ -374,13 +421,15 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             drop_fill = token_ids.new_empty(token_ids.size()).long().fill_(drop_token)
             return torch.where(subword_drop_mask, drop_fill, token_ids)
 
-        if "roberta" in words:
-            drop_mask = self._get_dropout_mask(words["roberta"]["mask"].bool(),
+        if form == "subword":
+            assert offsets is not None
+            drop_mask = self._get_dropout_mask(mask.bool(),
                                                p=dropout,
                                                training=self.training)
             drop_token = self._tokenizer.encode("<mask>", add_special_tokens=False)[0]
-            words["roberta"]["token_ids"] = mask_subwords(words["roberta"],
-                                                          drop_mask, drop_token)
+            words = mask_subwords(words, offsets, drop_mask, drop_token)
+
+        return words
 
     @staticmethod
     def _get_dropout_mask(mask: torch.Tensor,
@@ -835,3 +884,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         metrics.update({"UAS_AVG": numpy.mean(all_uas), "LAS_AVG": numpy.mean(all_las)})
 
         return metrics
+
+    def add_ft_lang_mean_to_lang_means(self, ft_lang_mean):
+        self._ft_lang_mean = torch.nn.Parameter(ft_lang_mean, requires_grad=False)
+

@@ -57,6 +57,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "dropout": 0.33,
         "lexical_dropout": 0.33,
         "pos_dropout": 0.33,
+        "dropout_location": "lm",
         "input_dropout": 0.33,
         "tag_dim": TAG_DIM,
         "encoder": {
@@ -79,6 +80,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
           "beta": 0.0,
         },
         "per_lang_vib": false,
+        "lang_mean_regex": "ckpts/*_mean",
         "langs_for_early_stop": TRAIN_LANGS,
         "tag_representation_dim": 50,
         "model_name": MODEL_NAME,

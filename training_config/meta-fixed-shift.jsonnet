@@ -47,7 +47,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 16,
+        "batch_size": 8,
         "sorting_keys": [["words", "roberta___mask"]],
         "instances_per_epoch": 160000,
     },
@@ -57,6 +57,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "dropout": 0.33,
         "lexical_dropout": 0.33,
         "pos_dropout": 0.33,
+        "dropout_location": "lm",
         "input_dropout": 0.33,
         "tag_dim": TAG_DIM,
         "encoder": {
@@ -79,6 +80,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
           "beta": 0.0,
         },
         "per_lang_vib": false,
+        "lang_mean_regex": "ckpts/*_mean",
         "langs_for_early_stop": TRAIN_LANGS,
         "tag_representation_dim": 50,
         "model_name": MODEL_NAME,
@@ -126,10 +128,15 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "validation_metric": "+LAS_AVG",
         "save_embedder": false,
         "num_serialized_models_to_keep": -1,
-        "num_gradient_accumulation_steps": 1,
+        "num_gradient_accumulation_steps": 2,
         "tasks_per_step": 10,
         "wrapper": {
-            "type": "multi",
+            "type": "fomaml",
+            "optimizer_cls": "Adam",
+            "optimizer_kwargs": {
+                "lr": 3e-4
+            },
+            // "shuffle_label_namespaces": ["head_tags"],
         },
     }
 }

@@ -7,8 +7,10 @@ from collections import OrderedDict
 import datetime
 import logging
 import os
+import re
 import shutil
 from functools import partial
+from pathlib import Path
 
 import torch
 
@@ -247,3 +249,36 @@ def pad_batched_tensors(batched_tensors: List[torch.Tensor],
         return new_tensor
 
     return torch.cat(list(map(partial(pad_to_len, max_len=max_length), batched_tensors)), dim=0)
+
+def get_lang_means(lang_mean_regex, vocab=None):
+    ckpt_dirs = list(Path(".").glob(lang_mean_regex))
+    lang_mean_list = [None] * vocab.get_vocab_size("lang_labels")
+    for ckpt_dir in ckpt_dirs:
+        lang_name = re.match("(.*)_mean", ckpt_dir.name).group(1)
+        try:
+            idx = vocab.get_token_index(lang_name, namespace="lang_labels")
+        except KeyError:
+            continue
+        state_dict = torch.load(ckpt_dir.joinpath("model_state_epoch_1.th"))
+        lang_mean_list[idx] = state_dict["mean"]
+
+    exemplar = None
+    for lang_mean in lang_mean_list:
+        if lang_mean is not None:
+            exemplar = lang_mean
+            break
+
+    lang_mean_list = list(map(
+        lambda x: torch.zeros_like(exemplar) if x is None else x,
+        lang_mean_list))
+
+    lang_means = torch.stack(lang_mean_list)
+
+    return lang_means
+
+def get_lang_mean(lang_mean_dir):
+    lang_mean_dir = Path(lang_mean_dir)
+    lang_name = re.match("(.*)_mean", lang_mean_dir.name).group(1)
+    state_dict = torch.load(lang_mean_dir.joinpath("model_state_epoch_1.th"))
+    return state_dict["mean"]
+

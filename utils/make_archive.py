@@ -68,6 +68,10 @@ def maybe_add_pretrained_embeddings(serialization_dir, weights_file, epoch):
                 full_model_state[key] = value
             else:
                 full_model_state[key] = model_state[key]
+        for key, value in model_state.items():
+            if not key in pretrained_model_state:
+                full_model_state[key] = value
+
         full_model_weights_file = f"full_epoch_{epoch}.th"
         torch.save(full_model_state, os.path.join(serialization_dir, full_model_weights_file))
     else:
