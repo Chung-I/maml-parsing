@@ -186,8 +186,10 @@ class BaseWrapper(Wrapper):
         optimizer = None
         if train:
             self._container.train()
+            trainable_params = filter(lambda p: p.requires_grad, self._container.parameters())
             optimizer = self.optimizer_cls(
-                self._container.parameters(), **self.optimizer_kwargs)
+                trainable_params, **self.optimizer_kwargs)
+            optimizer.load_state_dict(self.meta_optimizer.state_dict())
             optimizer.zero_grad()
         else:
             self._container.eval()
@@ -364,6 +366,41 @@ class ReptileWrapper(_FOWrapper):
     """
 
     _all_grads = True
+
+    def __init__(
+        self,
+        model: Model,
+        meta_optimizer: torch.optim.Optimizer,
+        optimizer_cls: str,
+        optimizer_kwargs: Dict[str, Any],
+        grad_norm: Optional[float] = None,
+        grad_clipping: Optional[float] = None,
+        update_hook: Callable = None,
+    ):
+        super(ReptileWrapper, self).__init__(
+            model=model,
+            meta_optimizer=meta_optimizer,
+            optimizer_cls=optimizer_cls,
+            optimizer_kwargs=optimizer_kwargs,
+            grad_norm=grad_norm,
+            grad_clipping=grad_clipping,
+            update_hook=update_hook,
+        )
+        trainable_params = filter(lambda p: p.requires_grad, self._container.parameters())
+        self.optimizer = self.optimizer_cls(
+            trainable_params, **self.optimizer_kwargs)
+
+    def run_task(self, task, train, meta_train):
+        if meta_train:
+            self._counter += 1
+        if train:
+            self._container.load_state_dict(self.model.state_dict(keep_vars=True))
+            self._container.train()
+            self.optimizer.zero_grad()
+        else:
+            self._container.eval()
+
+        return self.run_batches(task, self.optimizer, train=train, meta_train=meta_train)
 
 
 @Wrapper.register("fomaml")
