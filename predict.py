@@ -54,7 +54,11 @@ if params["model"]["type"] == "from_archive":
     model_config_file = str(Path(params["model"]["archive_file"]).parent.joinpath("config.json"))
     model_config = Params.from_file(model_config_file)["model"]
     params['model'] = model_config.as_dict(quiet=True)
-    params['model']["ft_lang_mean_dir"] = f"ckpts/{os.environ['FT_LANG']}_mean"
+    try:
+        if os.environ["SHIFT"] == "1":
+            params['model']["ft_lang_mean_dir"] = f"ckpts/{os.environ['FT_LANG']}_mean"
+    except (AttributeError, KeyError) as e:
+        pass
     try:
         shutil.copy(str(config_file), str(archive_dir / "old_config.json"))
         params.to_file(str(archive_dir / "config.json"))

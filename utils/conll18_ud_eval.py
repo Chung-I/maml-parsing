@@ -224,7 +224,7 @@ def load_conllu(file):
 
         # Read next token/word
         columns = line.split("\t")
-        if len(columns) != 10:
+        if len(columns) < 10:
             raise UDError("The CoNLL-U line does not contain 10 tab-separated columns: '{}'".format(_encode(line)))
 
         # Skip empty nodes

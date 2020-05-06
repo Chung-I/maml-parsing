@@ -32,7 +32,7 @@ local LANG = std.extVar("FT_LANG");
 local READER(x, alternate=true) = BASE_READER(x, alternate);
 
 local UD_ROOT = std.extVar("UD_ROOT");
-local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
+local DATA_PATH(lang, split) = UD_ROOT + lang + "**-" + split + ".conllu";
 
 {
     "dataset_reader": READER(LANG, false),
@@ -76,10 +76,10 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         },
         "patience": 10,
         "grad_norm": 5.0,
+        "ft_lang_mean_dir": "ckpts/" + LANG + "_mean",
         "validation_metric": "+LAS_AVG",
         "num_serialized_models_to_keep": 1,
         "num_gradient_accumulation_steps": 1,
-        "lang_mean_dir": "ckpts/" + LANG + "_mean",
         // "wandb": {
         //     "name": std.extVar("RUN_NAME"),
         //     "project": "allennlp-maml-parsing",

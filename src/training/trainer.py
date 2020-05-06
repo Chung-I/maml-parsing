@@ -820,13 +820,13 @@ class Trainer(TrainerBase):
         world_size = params.pop_int("world_size", 1)
 
         num_gradient_accumulation_steps = params.pop("num_gradient_accumulation_steps", 1)
-        lang_mean_dir = params.pop("lang_mean_dir", None)
+        lang_mean_dir = params.pop("ft_lang_mean_dir", None)
         if lang_mean_dir:
             try:
                 assert model._lang_means is not None
                 lang_mean = get_lang_mean(lang_mean_dir)
                 model.add_ft_lang_mean_to_lang_means(lang_mean)
-            except AttributeError:
+            except (AttributeError, AssertionError) as e:
                 pass
 
         writer = None

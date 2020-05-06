@@ -9,7 +9,7 @@ import numpy as np
 from overrides import overrides
 from conllu import parse_incr
 from src.data.dataset_readers.parser import parse_line, DEFAULT_FIELDS
-from src.data.dataset_readers.util import generate_stack_inputs
+from src.data.dataset_readers.util import generate_stack_inputs, ud_v1_to_v2_conversion
 
 from allennlp.common.checks import ConfigurationError
 from allennlp.data.dataset_readers.dataset_reader import DatasetReader
@@ -52,6 +52,8 @@ def get_file_paths(pathname: str, languages: List[str]):
     for file_path in glob.glob(pathname):
         base = os.path.splitext(os.path.basename(file_path))[0]
         lang_id = base.split("_")[0]
+        if lang_id == base:
+            lang_id = base.split("-")[0]
         if lang_id in languages:
             paths.append((lang_id, file_path))
 
@@ -141,8 +143,10 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
                 self._deprels = fp.read().splitlines()
 
     def map_deprel(self, rel):
+        rel = ud_v1_to_v2_conversion(rel)
         urel = rel.split(":")[0]
         xrel = rel
+
         if self._deprels is None:
             if self._use_language_specific_deprel:
                 return xrel

@@ -79,3 +79,15 @@ def generate_stack_inputs(heads, types, prior_order):
         position += 1
 
     return stacked_heads, children, siblings, stacked_types, skip_connect
+
+def ud_v1_to_v2_conversion(rel):
+    if rel == "dobj":
+        return "obj"
+    elif rel == "nsubjpass":
+        return "nsubj:pass"
+    elif rel == "csubjpass":
+        return "csubj:pass"
+    elif rel == "auxpass":
+        return "aux:pass"
+    else:
+        return rel
