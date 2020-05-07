@@ -239,27 +239,17 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         
         initializer(self)
 
-    @overrides
-    def forward(
-        self,  # type: ignore
+    def _embed(
+        self,
         words: TextFieldTensors,
+        mask: torch.Tensor,
         pos_tags: torch.LongTensor,
         metadata: List[Dict[str, Any]],
-        head_tags: torch.LongTensor = None,
-        head_indices: torch.LongTensor = None,
         lemmas: TextFieldTensors = None,
         feats: TextFieldTensors = None,
         langs: torch.LongTensor = None,
-        return_metric: bool = False,
-        variational: bool = False,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> torch.Tensor:
 
-        """
-        Embedding each language by the corresponding parameters for
-        `TextFieldEmbedder`. Batches should contain only samples from a
-        single language.
-        Metadata should have a `lang` key.
-        """
         if "lang" not in metadata[0]:
             raise ConfigurationError(
                 "metadata is missing 'lang' key; "
@@ -271,7 +261,6 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             if entry["lang"] != batch_lang:
                 raise ConfigurationError("Two languages in the same batch.")
 
-        mask = get_text_field_mask(words)
         if self._dropout_location == 'input':
             words["roberta"]["token_ids"] = self._apply_token_dropout(
                 words["roberta"]["token_ids"],
@@ -307,6 +296,17 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         embedded_text_input = self._input_dropout(embedded_text_input)
 
+        return embedded_text_input
+
+    def _bottleneck(
+        self,
+        embedded_text_input: torch.Tensor,
+        pos_tags: torch.LongTensor,
+        head_tags: torch.LongTensor = None,
+        head_indices: torch.LongTensor = None,
+        langs: torch.LongTensor = None,
+        variational: bool = False,
+    ):
         sample_method = "iid" if variational else "argmax"
         sample_size = None if variational else 1
 
@@ -322,6 +322,128 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             head_indices, head_tags, pos_tags, mask, r_mean, r_std, sample_size=sample_size,
             sample_method=sample_method, type_embeds=embedded_text_input,
         )
+        return embedded_text_input, head_indices, head_tags, pos_tags, mask, \
+            kl_loss, kl_div, kl_div2
+
+    def _project(self,
+        encoded_text: torch.Tensor,
+        mask: torch.LongTensor,
+        head_tags: torch.LongTensor = None,
+        head_indices: torch.LongTensor = None,
+    ):
+        batch_size, _, encoding_dim = encoded_text.size()
+
+        head_sentinel = self._head_sentinel.expand(batch_size, 1, encoding_dim)
+        # Concatenate the head sentinel onto the sentence representation.
+        encoded_text = torch.cat([head_sentinel, encoded_text], 1)
+        mask = torch.cat([mask.new_ones(batch_size, 1), mask], 1)
+        if head_indices is not None:
+            head_indices = torch.cat([head_indices.new_zeros(batch_size, 1), head_indices], 1)
+        if head_tags is not None:
+            head_tags = torch.cat([head_tags.new_zeros(batch_size, 1), head_tags], 1)
+        float_mask = mask.float()
+        encoded_text = self._dropout(encoded_text)
+
+        # shape (batch_size, sequence_length, arc_representation_dim)
+        head_arc_representation = self._dropout(self.head_arc_feedforward(encoded_text))
+        child_arc_representation = self._dropout(self.child_arc_feedforward(encoded_text))
+
+        # shape (batch_size, sequence_length, tag_representation_dim)
+        head_tag_representation = self._dropout(self.head_tag_feedforward(encoded_text))
+        child_tag_representation = self._dropout(self.child_tag_feedforward(encoded_text))
+        # shape (batch_size, sequence_length, sequence_length)
+        attended_arcs = self.arc_attention(head_arc_representation, child_arc_representation)
+
+        minus_inf = -1e8
+        minus_mask = (1 - float_mask) * minus_inf
+        attended_arcs = attended_arcs + minus_mask.unsqueeze(2) + minus_mask.unsqueeze(1)
+
+        return head_tag_representation, child_tag_representation, attended_arcs, mask
+
+    def _attend_and_normalize(
+        head_tag_representation: torch.Tensor,
+        child_tag_representation: torch.Tensor,
+        attended_arcs: torch.Tensor,
+        mask: torch.Tensor,
+    ):
+        batch_size, sequence_length, tag_representation_dim = head_tag_representation.size()
+
+        lengths = mask.data.sum(dim=1).long().cpu().numpy()
+
+        expanded_shape = [batch_size, sequence_length, sequence_length, tag_representation_dim]
+        head_tag_representation = head_tag_representation.unsqueeze(2)
+        head_tag_representation = head_tag_representation.expand(*expanded_shape).contiguous()
+        child_tag_representation = child_tag_representation.unsqueeze(1)
+        child_tag_representation = child_tag_representation.expand(*expanded_shape).contiguous()
+        # Shape (batch_size, sequence_length, sequence_length, num_head_tags)
+        pairwise_head_logits = self.tag_bilinear(head_tag_representation, child_tag_representation)
+
+        # Note that this log_softmax is over the tag dimension, and we don't consider pairs
+        # of tags which are invalid (e.g are a pair which includes a padded element) anyway below.
+        # Shape (batch, num_labels,sequence_length, sequence_length)
+        normalized_pairwise_head_logits = F.log_softmax(pairwise_head_logits, dim=3).permute(
+            0, 3, 1, 2
+        )
+
+        # Mask padded tokens, because we only want to consider actual words as heads.
+        minus_inf = -1e8
+        minus_mask = (1 - mask.float()) * minus_inf
+        attended_arcs = attended_arcs + minus_mask.unsqueeze(2) + minus_mask.unsqueeze(1)
+
+        # Shape (batch_size, sequence_length, sequence_length)
+        normalized_arc_logits = F.log_softmax(attended_arcs, dim=2).transpose(1, 2)
+
+        return normalized_arc_logits, normalized_pairwise_head_logits, lengths
+
+    def get_arc_factored_probs(
+        embedded_text_input: torch.Tensor,
+        pos_tags: torch.LongTensor,
+        head_tags: torch.LongTensor = None,
+        head_indices: torch.LongTensor = None,
+        langs: torch.LongTensor = None,
+        variational: bool = False,
+    ):
+        embedded_text_input, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
+            self._bottleneck(embedded_text_input, pos_tags, head_tags,
+                             head_indices, langs, variational)
+        encoded_text = self.encoder(embedded_text_input, mask)
+        head_tag_representation, child_tag_representation, attended_arcs, mask = \
+            self._project(encoded_text, mask, head_tags, head_indices)
+        normalized_arc_logits, normalized_pairwise_head_logits, lengths = self._attend_and_normalize(
+            head_tag_representation, child_tag_representation, attended_arcs, mask)
+
+        return {"arc_log_probs": normalized_arc_logits,
+                "tag_log_probs": normalized_pairwise_head_logits,
+                "lengths": lengths}
+
+    @overrides
+    def forward(
+        self,  # type: ignore
+        words: TextFieldTensors,
+        pos_tags: torch.LongTensor,
+        metadata: List[Dict[str, Any]],
+        head_tags: torch.LongTensor = None,
+        head_indices: torch.LongTensor = None,
+        lemmas: TextFieldTensors = None,
+        feats: TextFieldTensors = None,
+        langs: torch.LongTensor = None,
+        return_metric: bool = False,
+        variational: bool = False,
+    ) -> Dict[str, torch.Tensor]:
+
+        """
+        Embedding each language by the corresponding parameters for
+        `TextFieldEmbedder`. Batches should contain only samples from a
+        single language.
+        Metadata should have a `lang` key.
+        """
+
+        mask = get_text_field_mask(words)
+        embedded_text_input = self._embed(words, mask, pos_tags, metadata, lemmas, feats, langs)
+
+        embedded_text_input, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
+            self._bottleneck(embedded_text_input, pos_tags, head_tags,
+                             head_indices, langs, variational)
 
         encoded_text = self.encoder(embedded_text_input, mask)
 
@@ -482,32 +604,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         head_indices: torch.LongTensor = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
-        batch_size, _, encoding_dim = encoded_text.size()
-
-        head_sentinel = self._head_sentinel.expand(batch_size, 1, encoding_dim)
-        # Concatenate the head sentinel onto the sentence representation.
-        encoded_text = torch.cat([head_sentinel, encoded_text], 1)
-        mask = torch.cat([mask.new_ones(batch_size, 1), mask], 1)
-        if head_indices is not None:
-            head_indices = torch.cat([head_indices.new_zeros(batch_size, 1), head_indices], 1)
-        if head_tags is not None:
-            head_tags = torch.cat([head_tags.new_zeros(batch_size, 1), head_tags], 1)
-        float_mask = mask.float()
-        encoded_text = self._dropout(encoded_text)
-
-        # shape (batch_size, sequence_length, arc_representation_dim)
-        head_arc_representation = self._dropout(self.head_arc_feedforward(encoded_text))
-        child_arc_representation = self._dropout(self.child_arc_feedforward(encoded_text))
-
-        # shape (batch_size, sequence_length, tag_representation_dim)
-        head_tag_representation = self._dropout(self.head_tag_feedforward(encoded_text))
-        child_tag_representation = self._dropout(self.child_tag_feedforward(encoded_text))
-        # shape (batch_size, sequence_length, sequence_length)
-        attended_arcs = self.arc_attention(head_arc_representation, child_arc_representation)
-
-        minus_inf = -1e8
-        minus_mask = (1 - float_mask) * minus_inf
-        attended_arcs = attended_arcs + minus_mask.unsqueeze(2) + minus_mask.unsqueeze(1)
+        head_tag_representation, child_tag_representation, attended_arcs, mask = \
+            self._project(encoded_text, mask, head_tags, head_indices)
 
         if self.training or not self.use_mst_decoding_for_validation:
             predicted_heads, predicted_head_tags = self._greedy_decode(
@@ -716,33 +814,13 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             A tensor of shape (batch_size, sequence_length) representing the
             dependency tags of the optimally decoded heads of each word.
         """
-        batch_size, sequence_length, tag_representation_dim = head_tag_representation.size()
 
-        lengths = mask.data.sum(dim=1).long().cpu().numpy()
-
-        expanded_shape = [batch_size, sequence_length, sequence_length, tag_representation_dim]
-        head_tag_representation = head_tag_representation.unsqueeze(2)
-        head_tag_representation = head_tag_representation.expand(*expanded_shape).contiguous()
-        child_tag_representation = child_tag_representation.unsqueeze(1)
-        child_tag_representation = child_tag_representation.expand(*expanded_shape).contiguous()
-        # Shape (batch_size, sequence_length, sequence_length, num_head_tags)
-        pairwise_head_logits = self.tag_bilinear(head_tag_representation, child_tag_representation)
-
-        # Note that this log_softmax is over the tag dimension, and we don't consider pairs
-        # of tags which are invalid (e.g are a pair which includes a padded element) anyway below.
-        # Shape (batch, num_labels,sequence_length, sequence_length)
-        normalized_pairwise_head_logits = F.log_softmax(pairwise_head_logits, dim=3).permute(
-            0, 3, 1, 2
+        normalized_arc_logits, normalized_pairwise_head_logits, lengths = self._attend_and_normalize(
+            head_tag_representation,
+            child_tag_representation,
+            attended_arcs,
+            mask,
         )
-
-        # Mask padded tokens, because we only want to consider actual words as heads.
-        minus_inf = -1e8
-        minus_mask = (1 - mask.float()) * minus_inf
-        attended_arcs = attended_arcs + minus_mask.unsqueeze(2) + minus_mask.unsqueeze(1)
-
-        # Shape (batch_size, sequence_length, sequence_length)
-        normalized_arc_logits = F.log_softmax(attended_arcs, dim=2).transpose(1, 2)
-
         # Shape (batch_size, num_head_tags, sequence_length, sequence_length)
         # This energy tensor expresses the following relation:
         # energy[i,j] = "Score that i is the head of j". In this
