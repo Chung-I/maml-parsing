@@ -35,6 +35,8 @@ VOCAB_CONFIG_PATH = "config/create_vocab.json"
 logger = logging.getLogger(__name__)
 
 
+flatten  = lambda l: [item for sublist in l for item in sublist]
+
 def merge_configs(configs: List[Params]) -> Params:
     """
     Merges a list of configurations together, with items with duplicate keys closer to the front of the list
@@ -370,6 +372,33 @@ class _VisualizeManager:
             embeddings += list(map(get_sentence_embedding, results))
         embeddings = np.stack(embeddings)
         return embeddings
+
+    def _get_word_embeddings(self):
+        has_reader = self._dataset_reader is not None
+        index = 0
+        all_embeddings = []
+        all_pos_tags = []
+        all_positions = []
+        def get_sentence_embedding(result):
+            length = len(result['words'])
+            *hidden_states, = np.array(result['hidden_state'][:length])
+            tags = result["upos"][:length]
+            positions = list(range(len(tags)))
+            return hidden_states, tags, positions
+        for batch_data in tqdm(lazy_groups_of(self._get_instance_data(), self._batch_size)):
+            if len(batch_data) == 1:
+                results = [self._predictor.predict_instance(batch_data[0])]
+            else:
+                results = self._predictor.predict_batch_instance(batch_data)
+            for input_instance, output in zip(batch_data, results):
+                result =  self._predictor.dump_line(output)
+                self._maybe_print_to_console_and_file(index, result, str(input_instance))
+                index = index + 1
+            embeddings, pos_tags, positions = zip(*map(get_sentence_embedding, results))
+            all_embeddings += flatten(embeddings)
+            all_pos_tags += flatten(pos_tags)
+            all_positions += flatten(positions)
+        return all_embeddings, all_pos_tags, all_positions
 
     def run(self) -> None:
         has_reader = self._dataset_reader is not None
