@@ -68,10 +68,10 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
             "dropout": 0.0,
             "bidirectional": BIDIR,
         },
-        "pos_tag_embedding": {
-            "embedding_dim": 100,
-            "vocab_namespace": "pos"
-        },
+        // "pos_tag_embedding": {
+        //     "embedding_dim": 100,
+        //     "vocab_namespace": "pos"
+        // },
         "vib": {
           "activation": "leaky_relu",
           "tag_dim": TAG_DIM,
@@ -136,6 +136,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
             "optimizer_kwargs": {
                 "lr": 3e-4
             },
+            "inherit": true,
             // "shuffle_label_namespaces": ["head_tags"],
         },
     }
