@@ -109,6 +109,7 @@ class BaseWrapper(Wrapper):
         grad_norm: Optional[float] = None,
         grad_clipping: Optional[float] = None,
         update_hook: Callable = None,
+        inherit: bool = False,
     ):
         super(BaseWrapper, self).__init__()
         self.model = model
@@ -123,6 +124,7 @@ class BaseWrapper(Wrapper):
         self.forward_kwargs = {
             'return_metric': True,
         }
+        self._inherit = inherit
 
     @property
     def update_hook(self):
@@ -189,7 +191,8 @@ class BaseWrapper(Wrapper):
             trainable_params = filter(lambda p: p.requires_grad, self._container.parameters())
             optimizer = self.optimizer_cls(
                 trainable_params, **self.optimizer_kwargs)
-            optimizer.load_state_dict(self.meta_optimizer.state_dict())
+            if self._inherit:
+                optimizer.load_state_dict(self.meta_optimizer.state_dict())
             optimizer.zero_grad()
         else:
             self._container.eval()
@@ -289,6 +292,7 @@ class _FOWrapper(BaseWrapper):
         grad_norm: Optional[float] = None,
         grad_clipping: Optional[float] = None,
         update_hook: Callable = None,
+        inherit: bool = False,
     ):
         super(_FOWrapper, self).__init__(
             model=model,
@@ -298,6 +302,7 @@ class _FOWrapper(BaseWrapper):
             grad_norm=grad_norm,
             grad_clipping=grad_clipping,
             update_hook=update_hook,
+            inherit=inherit,
         )
         self._counter = 0
         self._updates = None
@@ -376,6 +381,7 @@ class ReptileWrapper(_FOWrapper):
         grad_norm: Optional[float] = None,
         grad_clipping: Optional[float] = None,
         update_hook: Callable = None,
+        inherit: bool = False,
     ):
         super(ReptileWrapper, self).__init__(
             model=model,
@@ -385,6 +391,7 @@ class ReptileWrapper(_FOWrapper):
             grad_norm=grad_norm,
             grad_clipping=grad_clipping,
             update_hook=update_hook,
+            inherit=inherit,
         )
         trainable_params = filter(lambda p: p.requires_grad, self._container.parameters())
         self.optimizer = self.optimizer_cls(

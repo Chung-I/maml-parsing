@@ -205,8 +205,6 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         self._langs_for_early_stop = langs_for_early_stop or []
 
-        self._lang_attachment_scores: Dict[str, AttachmentScores] = defaultdict(AttachmentScores)
-
         num_langs = self.vocab.get_vocab_size(namespace="lang_labels")
 
         self._per_lang_vib = per_lang_vib
@@ -242,24 +240,15 @@ class BiaffineDependencyParserMultiLangVIB(Model):
     def _embed(
         self,
         words: TextFieldTensors,
-        mask: torch.Tensor,
         pos_tags: torch.LongTensor,
+        mask: torch.Tensor,
         metadata: List[Dict[str, Any]],
         lemmas: TextFieldTensors = None,
         feats: TextFieldTensors = None,
         langs: torch.LongTensor = None,
+        batch_lang: str = None,
     ) -> torch.Tensor:
 
-        if "lang" not in metadata[0]:
-            raise ConfigurationError(
-                "metadata is missing 'lang' key; "
-                "Use the universal_dependencies_multilang dataset_reader."
-            )
-
-        batch_lang = metadata[0]["lang"]
-        for entry in metadata:
-            if entry["lang"] != batch_lang:
-                raise ConfigurationError("Two languages in the same batch.")
 
         if self._dropout_location == 'input':
             words["roberta"]["token_ids"] = self._apply_token_dropout(
@@ -302,6 +291,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         self,
         embedded_text_input: torch.Tensor,
         pos_tags: torch.LongTensor,
+        mask: torch.Tensor,
         head_tags: torch.LongTensor = None,
         head_indices: torch.LongTensor = None,
         langs: torch.LongTensor = None,
@@ -325,7 +315,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         return embedded_text_input, head_indices, head_tags, pos_tags, mask, \
             kl_loss, kl_div, kl_div2
 
-    def _project(self,
+    def _project(
+        self,
         encoded_text: torch.Tensor,
         mask: torch.LongTensor,
         head_tags: torch.LongTensor = None,
@@ -358,9 +349,11 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         minus_mask = (1 - float_mask) * minus_inf
         attended_arcs = attended_arcs + minus_mask.unsqueeze(2) + minus_mask.unsqueeze(1)
 
-        return head_tag_representation, child_tag_representation, attended_arcs, mask
+        return head_tag_representation, child_tag_representation, attended_arcs, \
+            mask, head_tags, head_indices
 
     def _attend_and_normalize(
+        self,
         head_tag_representation: torch.Tensor,
         child_tag_representation: torch.Tensor,
         attended_arcs: torch.Tensor,
@@ -396,25 +389,28 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         return normalized_arc_logits, normalized_pairwise_head_logits, lengths
 
     def get_arc_factored_probs(
+        self,
         embedded_text_input: torch.Tensor,
         pos_tags: torch.LongTensor,
+        mask: torch.Tensor,
         head_tags: torch.LongTensor = None,
         head_indices: torch.LongTensor = None,
         langs: torch.LongTensor = None,
         variational: bool = False,
     ):
         embedded_text_input, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
-            self._bottleneck(embedded_text_input, pos_tags, head_tags,
+            self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
                              head_indices, langs, variational)
         encoded_text = self.encoder(embedded_text_input, mask)
-        head_tag_representation, child_tag_representation, attended_arcs, mask = \
-            self._project(encoded_text, mask, head_tags, head_indices)
+        head_tag_representation, child_tag_representation, attended_arcs, mask, \
+            head_tags, head_indices = self._project(encoded_text, mask, head_tags, head_indices)
         normalized_arc_logits, normalized_pairwise_head_logits, lengths = self._attend_and_normalize(
             head_tag_representation, child_tag_representation, attended_arcs, mask)
 
         return {"arc_log_probs": normalized_arc_logits,
                 "tag_log_probs": normalized_pairwise_head_logits,
-                "lengths": lengths}
+                "lengths": lengths,
+                "mask": mask}
 
     @overrides
     def forward(
@@ -437,15 +433,28 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         single language.
         Metadata should have a `lang` key.
         """
+        if "lang" not in metadata[0]:
+            raise ConfigurationError(
+                "metadata is missing 'lang' key; "
+                "Use the universal_dependencies_multilang dataset_reader."
+            )
+
+        batch_lang = metadata[0]["lang"]
+        for entry in metadata:
+            if entry["lang"] != batch_lang:
+                raise ConfigurationError("Two languages in the same batch.")
 
         mask = get_text_field_mask(words)
-        embedded_text_input = self._embed(words, mask, pos_tags, metadata, lemmas, feats, langs)
+        embedded_text_input = self._embed(words, pos_tags, mask, metadata, lemmas, feats, langs)
 
         embedded_text_input, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
-            self._bottleneck(embedded_text_input, pos_tags, head_tags,
+            self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
                              head_indices, langs, variational)
 
         encoded_text = self.encoder(embedded_text_input, mask)
+
+        kl_div_score = self._lang_kl_divs[batch_lang]
+        kl_div_score(kl_div)
 
         if variational:
             return {"kl_loss": kl_loss, "kl_div": kl_div, "kl_div2": kl_div2}
@@ -457,8 +466,6 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         loss = arc_nll + tag_nll
 
         metric = None
-        kl_div_score = self._lang_kl_divs[batch_lang]
-        kl_div_score(kl_div)
         if head_indices is not None and head_tags is not None:
             evaluation_mask = self._get_mask_for_eval(mask[:, 1:], pos_tags)
             # We calculate attatchment scores for the whole sentence
@@ -497,7 +504,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         return output_dict
 
-    def _add_metadata_to_output_dict(self, metadata, output_dict):
+    @staticmethod
+    def _add_metadata_to_output_dict(metadata, output_dict):
         if metadata is not None:
             output_dict["words"] = [x["words"] for x in metadata]
             output_dict["upos"] = [x["upos"] for x in metadata]
@@ -604,8 +612,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         head_indices: torch.LongTensor = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
 
-        head_tag_representation, child_tag_representation, attended_arcs, mask = \
-            self._project(encoded_text, mask, head_tags, head_indices)
+        head_tag_representation, child_tag_representation, attended_arcs, mask, \
+            head_tags, head_indices = self._project(encoded_text, mask, head_tags, head_indices)
 
         if self.training or not self.use_mst_decoding_for_validation:
             predicted_heads, predicted_head_tags = self._greedy_decode(
