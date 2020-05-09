@@ -115,6 +115,7 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         view: str = 'graph',
         use_language_specific_deprel: bool = True,
         deprel_file: str = None,
+        in_memory: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -138,6 +139,10 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         self._read_language = read_language
         self._use_language_specific_deprel = use_language_specific_deprel
         self._deprels = None
+        self._in_memory = in_memory
+        self._file_cache = None
+        if self._in_memory:
+            self._file_cache = {}
         if deprel_file is not None:
             with open(deprel_file) as fp:
                 self._deprels = fp.read().splitlines()
@@ -160,44 +165,52 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
             return rel
 
     def _read_one_file(self, lang: str, file_path: str):
-        with open(file_path, "r") as conllu_file:
+        try:
+            conllu_text = self._file_cache[file_path]
+            logger.info(
+                "Reading UD instances for %s language from cached conllu dataset at: %s", lang, file_path
+            )
+        except (AttributeError, KeyError) as error:
+            with open(file_path, "r") as conllu_file:
+                conllu_text = conllu_file.read()
             logger.info(
                 "Reading UD instances for %s language from conllu dataset at: %s", lang, file_path
             )
+            self._file_cache[file_path] = conllu_text
 
-            for annotation in lazy_parse(conllu_file.read()):
-                # CoNLLU annotations sometimes add back in words that have been elided
-                # in the original sentence; we remove these, as we're just predicting
-                # dependencies for the original sentence.
-                # We filter by None here as elided words have a non-integer word id,
-                # and are replaced with None by the conllu python library.
-                multiword_tokens = [x for x in annotation if x["multi_id"] is not None]
-                annotation = [x for x in annotation if x["id"] is not None]
+        for annotation in lazy_parse(conllu_text):
+            # CoNLLU annotations sometimes add back in words that have been elided
+            # in the original sentence; we remove these, as we're just predicting
+            # dependencies for the original sentence.
+            # We filter by None here as elided words have a non-integer word id,
+            # and are replaced with None by the conllu python library.
+            multiword_tokens = [x for x in annotation if x["multi_id"] is not None]
+            annotation = [x for x in annotation if x["id"] is not None]
     
-                if len(annotation) == 0:
-                    continue
+            if len(annotation) == 0:
+                continue
     
-                def get_field(tag: str, map_fn: Callable[[Any], Any] = None) -> List[Any]:
-                    map_fn = map_fn if map_fn is not None else lambda x: x
-                    return [map_fn(x[tag]) if x[tag] is not None else "_" for x in annotation if tag in x]
+            def get_field(tag: str, map_fn: Callable[[Any], Any] = None) -> List[Any]:
+                map_fn = map_fn if map_fn is not None else lambda x: x
+                return [map_fn(x[tag]) if x[tag] is not None else "_" for x in annotation if tag in x]
     
-                # Extract multiword token rows (not used for prediction, purely for evaluation)
-                ids = [x["id"] for x in annotation]
-                multiword_ids = [x["multi_id"] for x in multiword_tokens]
-                multiword_forms = [x["form"] for x in multiword_tokens]
+            # Extract multiword token rows (not used for prediction, purely for evaluation)
+            ids = [x["id"] for x in annotation]
+            multiword_ids = [x["multi_id"] for x in multiword_tokens]
+            multiword_forms = [x["form"] for x in multiword_tokens]
     
-                words = get_field("form")
-                lemmas = get_field("lemma")
-                upos_tags = get_field("upostag")
-                xpos_tags = get_field("xpostag")
-                feats = get_field("feats", lambda x: "|".join(k + "=" + v for k, v in x.items())
-                                                     if hasattr(x, "items") else "_")
-                heads = get_field("head")
-                dep_rels = get_field("deprel")
-                dep_rels = list(map(self.map_deprel, dep_rels))
-                dependencies = list(zip(dep_rels, heads)) if self._read_dependencies else None
-                yield self.text_to_instance(lang, words, lemmas, upos_tags, xpos_tags,
-                                            feats, dependencies, ids, multiword_ids, multiword_forms)
+            words = get_field("form")
+            lemmas = get_field("lemma")
+            upos_tags = get_field("upostag")
+            xpos_tags = get_field("xpostag")
+            feats = get_field("feats", lambda x: "|".join(k + "=" + v for k, v in x.items())
+                                                 if hasattr(x, "items") else "_")
+            heads = get_field("head")
+            dep_rels = get_field("deprel")
+            dep_rels = list(map(self.map_deprel, dep_rels))
+            dependencies = list(zip(dep_rels, heads)) if self._read_dependencies else None
+            yield self.text_to_instance(lang, words, lemmas, upos_tags, xpos_tags,
+                                        feats, dependencies, ids, multiword_ids, multiword_forms)
 
     @overrides
     def _read(self, file_path: str):
@@ -327,6 +340,8 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
             "multiword_ids": multiword_ids,
             "multiword_forms": multiword_forms,
             "lang": lang,
+            "gold_tags": [x[0] for x in dependencies] if dependencies else None,
+            "gold_heads": [x[1] for x in dependencies] if dependencies else None,
         })
 
         return Instance(fields)
