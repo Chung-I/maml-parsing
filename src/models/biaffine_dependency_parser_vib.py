@@ -117,6 +117,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         tag_dim: int = 128,
         per_lang_vib: bool = True,
         adv_layer: str = 'encoder',
+        inspect_layer: str = 'encoder',
         lang_mean_regex: str = None,
         ft_lang_mean_dir: str = None,
         initializer: InitializerApplicator = InitializerApplicator(),
@@ -229,6 +230,9 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         assert adv_layer in ['vib', 'encoder']
         self._adv_layer = adv_layer
 
+        assert inspect_layer in ['embedding', 'vib', 'encoder', 'projection']
+        self._inspect_layer = inspect_layer
+
         if vib is not None:
             self.VIB = ContinuousVIB.from_params(
                 Params(vib),
@@ -321,6 +325,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         mask: torch.LongTensor,
         head_tags: torch.LongTensor = None,
         head_indices: torch.LongTensor = None,
+        return_arc_representation: bool = False,
     ):
         batch_size, _, encoding_dim = encoded_text.size()
 
@@ -349,6 +354,10 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         minus_mask = (1 - float_mask) * minus_inf
         attended_arcs = attended_arcs + minus_mask.unsqueeze(2) + minus_mask.unsqueeze(1)
 
+        if return_arc_representation:
+            return head_arc_representation, child_arc_representation, \
+                head_tag_representation, child_tag_representation, \
+                attended_arcs, mask, head_tags, head_indices
         return head_tag_representation, child_tag_representation, attended_arcs, \
             mask, head_tags, head_indices
 
@@ -447,11 +456,11 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         mask = get_text_field_mask(words)
         embedded_text_input = self._embed(words, pos_tags, mask, metadata, lemmas, feats, langs)
 
-        embedded_text_input, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
+        bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
             self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
                              head_indices, langs, variational)
 
-        encoded_text = self.encoder(embedded_text_input, mask)
+        encoded_text = self.encoder(bottlenecked_text, mask)
 
         kl_div_score = self._lang_kl_divs[batch_lang]
         kl_div_score(kl_div)
@@ -459,8 +468,13 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         if variational:
             return {"kl_loss": kl_loss, "kl_div": kl_div, "kl_div2": kl_div2}
 
+        head_arc_representation, child_arc_representation, \
+        head_tag_representation, child_tag_representation, attended_arcs, mask, \
+            head_tags, head_indices = self._project(encoded_text, mask, head_tags, head_indices,
+                                                    return_arc_representation=True)
         predicted_heads, predicted_head_tags, mask, arc_nll, tag_nll = self._parse(
-            encoded_text, mask, head_tags, head_indices
+            head_tag_representation, child_tag_representation,
+            attended_arcs, mask, head_tags, head_indices,
         )
 
         loss = arc_nll + tag_nll
@@ -475,8 +489,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             scores(
                 predicted_heads[:, 1:],
                 predicted_head_tags[:, 1:],
-                head_indices,
-                head_tags,
+                head_indices[:, 1:],
+                head_tags[:, 1:],
                 evaluation_mask,
             )
             if return_metric:
@@ -484,10 +498,32 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 kl_div_metric = kl_div_score.get_metric(reset=True)
                 metric.update({"kl_div": kl_div_metric})
 
-        hidden_state = encoded_text if self._adv_layer == "encoder" else embedded_text_input
+        output_dict = {}
+        if self._inspect_layer == "embedding":
+            output_dict["hidden_state"] = embedded_text_input
+        elif self._inspect_layer == "vib":
+            output_dict["hidden_state"] = bottlenecked_text
+        elif self._inspect_layer == "encoder":
+            output_dict["hidden_state"] = encoded_text
+        elif self._inspect_layer == "projection":
+            batch_size, sequence_length, _ = head_arc_representation.size()
+            range_vector = get_range_vector(batch_size, get_device_of(head_arc_representation)).unsqueeze(1)
+            timestep_index = get_range_vector(sequence_length, get_device_of(head_arc_representation))
+            child_index = (
+                timestep_index.view(1, sequence_length).expand(batch_size, sequence_length).long()
+            )
+            # we're exchanging child and head arc since this:
+            # https://github.com/allenai/allennlp/issues/2908
+            head_arc_reps = child_arc_representation[range_vector, head_indices]
+            child_arc_reps = head_arc_representation[range_vector, child_index]
+            head_tag_reps = head_tag_representation[range_vector, head_indices]
+            child_tag_reps = child_tag_representation[range_vector, child_index]
+            output_dict["arc_hidden_state"] = torch.cat([head_arc_reps, child_arc_reps], dim=-1)
+            output_dict["tag_hidden_state"] = torch.cat([head_tag_reps, child_tag_reps], dim=-1)
+        else:
+            raise NotImplementedError
 
-        output_dict = {
-            "hidden_state": hidden_state,
+        output_dict.update({
             "heads": predicted_heads,
             "head_tags": predicted_head_tags,
             "arc_loss": arc_nll,
@@ -495,7 +531,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             "loss": loss,
             "mask": mask,
             "kl_loss": kl_loss,
-        }
+        })
 
         if metric is not None:
             output_dict["metric"] = metric
@@ -508,10 +544,13 @@ class BiaffineDependencyParserMultiLangVIB(Model):
     def _add_metadata_to_output_dict(metadata, output_dict):
         if metadata is not None:
             output_dict["words"] = [x["words"] for x in metadata]
+            output_dict["langs"] = [x["lang"] for x in metadata]
             output_dict["upos"] = [x["upos"] for x in metadata]
             output_dict["xpos"] = [x["xpos"] for x in metadata]
             output_dict["feats"] = [x["feats"] for x in metadata]
             output_dict["lemmas"] = [x["lemmas"] for x in metadata]
+            output_dict["gold_tags"] = [x["gold_tags"] for x in metadata]
+            output_dict["gold_heads"] = [x["gold_heads"] for x in metadata]
             output_dict["ids"] = [x["ids"] for x in metadata if "ids" in x]
             output_dict["multiword_ids"] = [x["multiword_ids"] for x in metadata if "multiword_ids" in x]
             output_dict["multiword_forms"] = [x["multiword_forms"] for x in metadata if "multiword_forms" in x]
@@ -606,14 +645,13 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
     def _parse(
         self,
-        encoded_text: torch.Tensor,
+        head_tag_representation: torch.Tensor,
+        child_tag_representation: torch.Tensor,
+        attended_arcs: torch.Tensor,
         mask: torch.LongTensor,
         head_tags: torch.LongTensor = None,
         head_indices: torch.LongTensor = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-
-        head_tag_representation, child_tag_representation, attended_arcs, mask, \
-            head_tags, head_indices = self._project(encoded_text, mask, head_tags, head_indices)
 
         if self.training or not self.use_mst_decoding_for_validation:
             predicted_heads, predicted_head_tags = self._greedy_decode(
