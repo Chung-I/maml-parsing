@@ -170,13 +170,14 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
             logger.info(
                 "Reading UD instances for %s language from cached conllu dataset at: %s", lang, file_path
             )
-        except (AttributeError, KeyError) as error:
+        except (TypeError, KeyError) as error:
             with open(file_path, "r") as conllu_file:
                 conllu_text = conllu_file.read()
             logger.info(
                 "Reading UD instances for %s language from conllu dataset at: %s", lang, file_path
             )
-            self._file_cache[file_path] = conllu_text
+            if isinstance(error, KeyError):
+                self._file_cache[file_path] = conllu_text
 
         for annotation in lazy_parse(conllu_text):
             # CoNLLU annotations sometimes add back in words that have been elided
