@@ -13,7 +13,7 @@ from allennlp.common import Params
 from allennlp.common.checks import check_dimensions_match, ConfigurationError
 from allennlp.data import TextFieldTensors, Vocabulary
 from allennlp.modules import Seq2SeqEncoder, TextFieldEmbedder, Embedding, InputVariationalDropout
-from allennlp.modules import FeedForward
+from allennlp.modules import FeedForward, Seq2VecEncoder
 from allennlp.modules.matrix_attention.bilinear_matrix_attention import BilinearMatrixAttention
 from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator, Activation
@@ -120,6 +120,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         inspect_layer: str = 'encoder',
         lang_mean_regex: str = None,
         ft_lang_mean_dir: str = None,
+        typo_encoder: Seq2VecEncoder = None,
+        typo_feedforward: FeedForward = None,
         initializer: InitializerApplicator = InitializerApplicator(),
         regularizer: Optional[RegularizerApplicator] = None,
     ) -> None:
@@ -232,6 +234,9 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         assert inspect_layer in ['embedding', 'vib', 'encoder', 'projection']
         self._inspect_layer = inspect_layer
+
+        self.typo_encoder = typo_encoder
+        self.typo_feedforward = typo_feedforward
 
         if vib is not None:
             self.VIB = ContinuousVIB.from_params(
@@ -460,7 +465,16 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
                              head_indices, langs, variational)
 
-        encoded_text = self.encoder(bottlenecked_text, mask)
+        if self.typo_encoder is not None and self.typo_feedforward is not None:
+            typo_feats = self.typo_encoder(embedded_text_input, mask)
+            typo_feats = self.typo_feedforward(typo_feats)
+            batch_size, seq_len = pos_tags.size()
+            pooled_feats = torch.mean(typo_feats, dim=0)
+            expanded_feats = pooled_feats.view(1, 1, -1).expand(batch_size, seq_len, -1)
+            augmented_text = torch.cat([bottlenecked_text, expanded_feats], dim=-1)
+            encoded_text = self.encoder(augmented_text, mask)
+        else:
+            encoded_text = self.encoder(bottlenecked_text, mask)
 
         kl_div_score = self._lang_kl_divs[batch_lang]
         kl_div_score(kl_div)
