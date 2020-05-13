@@ -235,14 +235,10 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         assert inspect_layer in ['embedding', 'vib', 'encoder', 'projection']
         self._inspect_layer = inspect_layer
 
-<<<<<<< HEAD
         self.typo_encoder = typo_encoder
         self.typo_feedforward = typo_feedforward
 
-||||||| constructed merge base
-=======
         self.VIB = None
->>>>>>> biaffine_parser_vib without vib
         if vib is not None:
             self.VIB = ContinuousVIB.from_params(
                 Params(vib),
@@ -488,6 +484,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         mask = get_text_field_mask(words)
         embedded_text_input = self._embed(words, pos_tags, mask, metadata, lemmas, feats, langs)
 
+        kl_loss = None
         if self.VIB is not None: 
             bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
                 self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
@@ -571,11 +568,13 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             "tag_loss": tag_nll,
             "loss": loss,
             "mask": mask,
-            "kl_loss": kl_loss,
         })
 
         if metric is not None:
             output_dict["metric"] = metric
+
+        if kl_loss is not None:
+            output_dict["kl_loss"] = kl_loss
 
         self._add_metadata_to_output_dict(metadata, output_dict)
 
