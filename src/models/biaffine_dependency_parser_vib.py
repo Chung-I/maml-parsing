@@ -324,6 +324,17 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         return embedded_text_input, head_indices, head_tags, pos_tags, mask, \
             kl_loss, kl_div, kl_div2
 
+    def _gen_typo_feats(self,
+                        embedded_text_input: torch.Tensor,
+                        mask: torch.LongTensor) -> torch.Tensor:
+        typo_feats = self.typo_encoder(embedded_text_input, mask)
+        typo_feats = self.typo_feedforward(typo_feats)
+        batch_size, seq_len = mask.size()
+        pooled_feats = torch.mean(typo_feats, dim=0)
+        expanded_feats = pooled_feats.view(1, 1, -1).expand(batch_size, seq_len, -1)
+
+        return expanded_feats
+
     def _project(
         self,
         encoded_text: torch.Tensor,
@@ -412,10 +423,17 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         langs: torch.LongTensor = None,
         variational: bool = False,
     ):
-        embedded_text_input, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
+        bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
             self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
                              head_indices, langs, variational)
-        encoded_text = self.encoder(embedded_text_input, mask)
+
+        if self.typo_encoder is not None and self.typo_feedforward is not None:
+            expanded_feats = self._gen_typo_feats(embedded_text_input, mask)
+            augmented_text = torch.cat([bottlenecked_text, expanded_feats], dim=-1)
+            encoded_text = self.encoder(augmented_text, mask)
+        else:
+            encoded_text = self.encoder(bottlenecked_text, mask)
+
         head_tag_representation, child_tag_representation, attended_arcs, mask, \
             head_tags, head_indices = self._project(encoded_text, mask, head_tags, head_indices)
         normalized_arc_logits, normalized_pairwise_head_logits, lengths = self._attend_and_normalize(
@@ -466,11 +484,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                              head_indices, langs, variational)
 
         if self.typo_encoder is not None and self.typo_feedforward is not None:
-            typo_feats = self.typo_encoder(embedded_text_input, mask)
-            typo_feats = self.typo_feedforward(typo_feats)
-            batch_size, seq_len = pos_tags.size()
-            pooled_feats = torch.mean(typo_feats, dim=0)
-            expanded_feats = pooled_feats.view(1, 1, -1).expand(batch_size, seq_len, -1)
+            expanded_feats = self._gen_typo_feats(embedded_text_input, mask)
             augmented_text = torch.cat([bottlenecked_text, expanded_feats], dim=-1)
             encoded_text = self.encoder(augmented_text, mask)
         else:
