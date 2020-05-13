@@ -98,9 +98,9 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         vocab: Vocabulary,
         text_field_embedder: TextFieldEmbedder,
         encoder: Seq2SeqEncoder,
-        vib: Params,
         tag_representation_dim: int,
         arc_representation_dim: int,
+        vib: Params = None,
         model_name: str = None,
         tag_feedforward: FeedForward = None,
         arc_feedforward: FeedForward = None,
@@ -235,9 +235,14 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         assert inspect_layer in ['embedding', 'vib', 'encoder', 'projection']
         self._inspect_layer = inspect_layer
 
+<<<<<<< HEAD
         self.typo_encoder = typo_encoder
         self.typo_feedforward = typo_feedforward
 
+||||||| constructed merge base
+=======
+        self.VIB = None
+>>>>>>> biaffine_parser_vib without vib
         if vib is not None:
             self.VIB = ContinuousVIB.from_params(
                 Params(vib),
@@ -423,16 +428,20 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         langs: torch.LongTensor = None,
         variational: bool = False,
     ):
-        bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
-            self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
-                             head_indices, langs, variational)
+        if self.VIB is not None: 
+            bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
+                self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
+                                 head_indices, langs, variational)
+            embedded_text = bottlenecked_text
+        else:
+            embedded_text = embedded_text_input
 
         if self.typo_encoder is not None and self.typo_feedforward is not None:
             expanded_feats = self._gen_typo_feats(embedded_text_input, mask)
-            augmented_text = torch.cat([bottlenecked_text, expanded_feats], dim=-1)
+            augmented_text = torch.cat([embedded_text, expanded_feats], dim=-1)
             encoded_text = self.encoder(augmented_text, mask)
         else:
-            encoded_text = self.encoder(bottlenecked_text, mask)
+            encoded_text = self.encoder(embedded_text, mask)
 
         head_tag_representation, child_tag_representation, attended_arcs, mask, \
             head_tags, head_indices = self._project(encoded_text, mask, head_tags, head_indices)
@@ -479,19 +488,22 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         mask = get_text_field_mask(words)
         embedded_text_input = self._embed(words, pos_tags, mask, metadata, lemmas, feats, langs)
 
-        bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
-            self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
-                             head_indices, langs, variational)
+        if self.VIB is not None: 
+            bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
+                self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
+                                 head_indices, langs, variational)
+            embedded_text = bottlenecked_text
+            kl_div_score = self._lang_kl_divs[batch_lang]
+            kl_div_score(kl_div)
+        else:
+            embedded_text = embedded_text_input
 
         if self.typo_encoder is not None and self.typo_feedforward is not None:
             expanded_feats = self._gen_typo_feats(embedded_text_input, mask)
-            augmented_text = torch.cat([bottlenecked_text, expanded_feats], dim=-1)
+            augmented_text = torch.cat([embedded_text, expanded_feats], dim=-1)
             encoded_text = self.encoder(augmented_text, mask)
         else:
-            encoded_text = self.encoder(bottlenecked_text, mask)
-
-        kl_div_score = self._lang_kl_divs[batch_lang]
-        kl_div_score(kl_div)
+            encoded_text = self.encoder(embedded_text, mask)
 
         if variational:
             return {"kl_loss": kl_loss, "kl_div": kl_div, "kl_div2": kl_div2}
@@ -523,8 +535,9 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             )
             if return_metric:
                 metric = scores.get_metric(reset=True)
-                kl_div_metric = kl_div_score.get_metric(reset=True)
-                metric.update({"kl_div": kl_div_metric})
+                if self.VIB:
+                    kl_div_metric = kl_div_score.get_metric(reset=True)
+                    metric.update({"kl_div": kl_div_metric})
 
         output_dict = {}
         if self._inspect_layer == "embedding":

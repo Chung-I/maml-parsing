@@ -310,7 +310,7 @@ class MetaTrainer(TrainerBase):
         self.task_D = task_discriminator
         self.optim_D = discriminator_optimizer
 
-        self.has_VIB = hasattr(self.model, 'VIB') and self.model.VIB.beta > 0
+        self.has_VIB = hasattr(self.model, 'VIB') and self.model.VIB and self.model.VIB.beta > 0
 
         def update_hook(norms):
             assert log_grad_norm in ["none", 'total', 'var']
