@@ -110,6 +110,7 @@ class BaseWrapper(Wrapper):
         grad_clipping: Optional[float] = None,
         update_hook: Callable = None,
         inherit: bool = False,
+        loss_ratios_per_step: List[Dict[str, int]] = None,
     ):
         super(BaseWrapper, self).__init__()
         self.model = model
@@ -121,9 +122,13 @@ class BaseWrapper(Wrapper):
         self.optimizer_cls = getattr(torch.optim, optimizer_cls)
         self.optimizer_kwargs = optimizer_kwargs
         self._update_hook = update_hook
-        self.forward_kwargs = {
-            'return_metric': True,
-        }
+        def forward_kwargs(step):
+            ratios = {"dep": 1.0, "pos": 0.0}
+            if loss_ratios_per_step is not None:
+                ratios = loss_ratios_per_step[step]
+            return {'return_metric': True,
+                    'loss_ratios': ratios}
+        self.forward_kwargs = forward_kwargs
         self._inherit = inherit
 
     @property
@@ -219,7 +224,7 @@ class BaseWrapper(Wrapper):
             inputs = move_to_device(inputs, device)
 
             # Evaluate model
-            output_dict = self._container(**inputs, **self.forward_kwargs)
+            output_dict = self._container(**inputs, **self.forward_kwargs(n))
             loss = output_dict["loss"]
             metric = output_dict["metric"]
             if torch.isnan(loss):
@@ -293,6 +298,7 @@ class _FOWrapper(BaseWrapper):
         grad_clipping: Optional[float] = None,
         update_hook: Callable = None,
         inherit: bool = False,
+        loss_ratios_per_step: List[Dict[str, int]] = None,
     ):
         super(_FOWrapper, self).__init__(
             model=model,
@@ -303,6 +309,7 @@ class _FOWrapper(BaseWrapper):
             grad_clipping=grad_clipping,
             update_hook=update_hook,
             inherit=inherit,
+            loss_ratios_per_step=loss_ratios_per_step,
         )
         self._counter = 0
         self._updates = None
@@ -382,6 +389,7 @@ class ReptileWrapper(_FOWrapper):
         grad_clipping: Optional[float] = None,
         update_hook: Callable = None,
         inherit: bool = False,
+        loss_ratios_per_step: List[Dict[str, int]] = None,
     ):
         super(ReptileWrapper, self).__init__(
             model=model,
@@ -392,6 +400,7 @@ class ReptileWrapper(_FOWrapper):
             grad_clipping=grad_clipping,
             update_hook=update_hook,
             inherit=inherit,
+            loss_ratios_per_step=loss_ratios_per_step,
         )
         trainable_params = filter(lambda p: p.requires_grad, self._container.parameters())
         self.optimizer = self.optimizer_cls(
@@ -437,6 +446,7 @@ class MAMLWrapper(Wrapper):
         grad_norm: Optional[float] = None,
         grad_clipping: Optional[float] = None,
         update_hook: Callable = None,
+        loss_ratios_per_step: List[Dict[str, int]] = None,
     ):
         super().__init__()
         self._counter = 0
@@ -446,9 +456,15 @@ class MAMLWrapper(Wrapper):
             self.model.parameters(),
             **optimizer_kwargs
         )
-        self.forward_kwargs = {
-            'return_metric': True,
-        }
+
+        def forward_kwargs(step):
+            ratios = {"dep": 1.0, "pos": 0.0}
+            if loss_ratios_per_step is not None:
+                ratios = loss_ratios_per_step[step]
+            return {'return_metric': True,
+                    'loss_ratios': ratios}
+        self.forward_kwargs = forward_kwargs
+
         self._shuffler_factory: Dict[str, Callable] = {}
         for namespace in shuffle_label_namespaces:
             num_labels = self.model.vocab.get_vocab_size(namespace)
@@ -493,7 +509,7 @@ class MAMLWrapper(Wrapper):
                 for n, inputs in enumerate(batches[:-1]):
                     inputs = self.shuffle_labels(inputs, shufflers)
                     inputs = move_to_device(inputs, device)
-                    output_dict = fmodel(**inputs, **self.forward_kwargs)
+                    output_dict = fmodel(**inputs, **self.forward_kwargs(n))
                     loss = output_dict["loss"]
                     metric = output_dict["metric"]
                     diffopt.step(loss)
@@ -501,7 +517,7 @@ class MAMLWrapper(Wrapper):
 
                 inputs = self.shuffle_labels(batches[-1], shufflers)
                 inputs = move_to_device(inputs, device)
-                output_dict = fmodel(**inputs, **self.forward_kwargs)
+                output_dict = fmodel(**inputs, **self.forward_kwargs(len(batches)-1))
                 loss = output_dict["loss"]
                 metric = output_dict["metric"]
                 loss.backward()

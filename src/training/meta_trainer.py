@@ -311,6 +311,7 @@ class MetaTrainer(TrainerBase):
         self.optim_D = discriminator_optimizer
 
         self.has_VIB = hasattr(self.model, 'VIB') and self.model.VIB and self.model.VIB.beta > 0
+        self.has_pos = self.model._predict_pos
 
         def update_hook(norms):
             assert log_grad_norm in ["none", 'total', 'var']
@@ -434,6 +435,12 @@ class MetaTrainer(TrainerBase):
                 KLDivs = [list(map(lambda x: x["metric"]["kl_div"], metrics)) for metrics in task_metrics]
                 names.append("KLDiv")
                 list_values.append(KLDivs)
+
+            if self.has_pos:
+                pos_accs = [list(map(lambda x: x["metric"].get("pos_accuracy", 0.0), metrics)) for metrics in task_metrics]
+                names.append("pos_acc")
+                list_values.append(pos_accs)
+
 
             for name, values in zip(names, list_values):
                 self._writer.log({f"step_{name}_{task}_{i}": value

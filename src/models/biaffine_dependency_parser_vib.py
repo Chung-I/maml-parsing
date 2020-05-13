@@ -13,7 +13,7 @@ from allennlp.common import Params
 from allennlp.common.checks import check_dimensions_match, ConfigurationError
 from allennlp.data import TextFieldTensors, Vocabulary
 from allennlp.modules import Seq2SeqEncoder, TextFieldEmbedder, Embedding, InputVariationalDropout
-from allennlp.modules import FeedForward, Seq2VecEncoder
+from allennlp.modules import FeedForward, TimeDistributed, Seq2VecEncoder
 from allennlp.modules.matrix_attention.bilinear_matrix_attention import BilinearMatrixAttention
 from allennlp.models.model import Model
 from allennlp.nn import InitializerApplicator, RegularizerApplicator, Activation
@@ -24,9 +24,10 @@ from allennlp.nn.util import (
     masked_mean,
     get_lengths_from_binary_sequence_mask,
     batched_span_select,
+    sequence_cross_entropy_with_logits,
 )
 from allennlp.nn.chu_liu_edmonds import decode_mst
-from allennlp.training.metrics import AttachmentScores, Average
+from allennlp.training.metrics import AttachmentScores, Average, CategoricalAccuracy
 
 from src.models.biaffine_dependency_parser import BiaffineDependencyParser
 from src.modules.vib import ContinuousVIB
@@ -122,6 +123,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         ft_lang_mean_dir: str = None,
         typo_encoder: Seq2VecEncoder = None,
         typo_feedforward: FeedForward = None,
+        predict_pos: bool = False,
         initializer: InitializerApplicator = InitializerApplicator(),
         regularizer: Optional[RegularizerApplicator] = None,
     ) -> None:
@@ -237,6 +239,17 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         self.typo_encoder = typo_encoder
         self.typo_feedforward = typo_feedforward
+
+        self._predict_pos = predict_pos
+        self._num_pos_tags = self.vocab.get_vocab_size("pos")
+        self.tag_projection_layer = None
+        if predict_pos:
+            self.tag_projection_layer = TimeDistributed(
+                torch.nn.Linear(tag_dim, self._num_pos_tags)
+            )
+            self._pos_metrics = {
+                "pos_accuracy": CategoricalAccuracy(),
+            }
 
         self.VIB = None
         if vib is not None:
@@ -462,6 +475,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         langs: torch.LongTensor = None,
         return_metric: bool = False,
         variational: bool = False,
+        loss_ratios: Dict[str, float] = {"dep": 1.0, "pos": 0.0},
     ) -> Dict[str, torch.Tensor]:
 
         """
@@ -481,10 +495,13 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             if entry["lang"] != batch_lang:
                 raise ConfigurationError("Two languages in the same batch.")
 
+        metric = {}
+
         mask = get_text_field_mask(words)
         embedded_text_input = self._embed(words, pos_tags, mask, metadata, lemmas, feats, langs)
 
         kl_loss = None
+        pos_loss = None
         if self.VIB is not None: 
             bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
                 self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
@@ -492,6 +509,17 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             embedded_text = bottlenecked_text
             kl_div_score = self._lang_kl_divs[batch_lang]
             kl_div_score(kl_div)
+            if loss_ratios["pos"] > 0.0:
+                logits = self.tag_projection_layer(bottlenecked_text)
+                pos_loss = sequence_cross_entropy_with_logits(logits, pos_tags, mask)
+                for name, pos_metric in self._pos_metrics.items():
+                    pos_metric(logits, pos_tags, mask.float())
+                    metric.update({name: pos_metric.get_metric(reset=True)})
+                if loss_ratios["dep"] == 0.0:
+                    return {
+                        "loss": pos_loss,
+                        "metric": metric
+                    }
         else:
             embedded_text = embedded_text_input
 
@@ -514,9 +542,10 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             attended_arcs, mask, head_tags, head_indices,
         )
 
-        loss = arc_nll + tag_nll
+        loss = loss_ratios["dep"] * (arc_nll + tag_nll)
+        if loss_ratios["pos"] > 0.0:
+            loss = loss + loss_ratios["pos"] * pos_loss
 
-        metric = None
         if head_indices is not None and head_tags is not None:
             evaluation_mask = self._get_mask_for_eval(mask[:, 1:], pos_tags)
             # We calculate attatchment scores for the whole sentence
@@ -531,7 +560,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 evaluation_mask,
             )
             if return_metric:
-                metric = scores.get_metric(reset=True)
+                metric.update(scores.get_metric(reset=True))
                 if self.VIB:
                     kl_div_metric = kl_div_score.get_metric(reset=True)
                     metric.update({"kl_div": kl_div_metric})
@@ -570,11 +599,14 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             "mask": mask,
         })
 
-        if metric is not None:
+        if metric:
             output_dict["metric"] = metric
 
         if kl_loss is not None:
             output_dict["kl_loss"] = kl_loss
+
+        if pos_loss is not None:
+            output_dict["pos_loss"] = pos_loss
 
         self._add_metadata_to_output_dict(metadata, output_dict)
 
