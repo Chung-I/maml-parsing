@@ -111,6 +111,11 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
           "type": "adam",
           "lr": 5e-5,
         },
+        "learning_rate_scheduler": {
+            "type": "slanted_triangular",
+            "num_epochs": 80,
+            "num_steps_per_epoch": 1250,
+        },
         "patience": 10,
         "validation_metric": "+LAS_AVG",
         "save_embedder": true,

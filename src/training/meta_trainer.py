@@ -394,11 +394,11 @@ class MetaTrainer(TrainerBase):
         tasks = list(batch_group_generators.keys())
         num_tasks = len(tasks)
 
-        if isinstance(self._learning_rate_scheduler, SlantedTriangular):
-            old_num_steps_per_epoch = self._learning_rate_scheduler.num_steps_per_epoch
-            self._learning_rate_scheduler.num_steps_per_epoch = num_training_batches[0]
-            logger.info(f"modify num_steps_per_epoch of lr scheduler from"
-                        f"{old_num_steps_per_epoch} to {num_training_batches}")
+        #if isinstance(self._learning_rate_scheduler, SlantedTriangular):
+        #    old_num_steps_per_epoch = self._learning_rate_scheduler.num_steps_per_epoch
+        #    self._learning_rate_scheduler.num_steps_per_epoch = num_training_batches[0]
+        #    logger.info(f"modify num_steps_per_epoch of lr scheduler from"
+        #                f"{old_num_steps_per_epoch} to {num_training_batches}")
 
         self._last_log = time.time()
         last_save_time = time.time()
