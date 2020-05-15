@@ -150,7 +150,7 @@ class BaseWrapper(Wrapper):
         return self._container
 
     @abstractmethod
-    def _partial_meta_update(self, num_batches):
+    def _partial_meta_update(self, step, num_batches):
         """Meta-model specific meta update rule.
 
         Arguments:
@@ -239,9 +239,9 @@ class BaseWrapper(Wrapper):
             grad_norm = self.rescale_gradients()
 
             optimizer.step()
+            if meta_train:
+                self._partial_meta_update(n, len(batches))
 
-        if meta_train:
-            self._partial_meta_update(len(batches))
 
         return metrics
 
@@ -267,7 +267,7 @@ class NoWrapper(BaseWrapper):
         self._container.load_state_dict(self.model.state_dict(keep_vars=True))
         return out
 
-    def _partial_meta_update(self, num_batches):
+    def _partial_meta_update(self, step, num_batches):
         pass
 
     def _final_meta_update(self):
@@ -322,7 +322,11 @@ class _FOWrapper(BaseWrapper):
             self._container.load_state_dict(self.model.state_dict(keep_vars=True))
         return super(_FOWrapper, self).run_task(task, train, meta_train)
 
-    def _partial_meta_update(self, num_batches):
+    def _partial_meta_update(self, step, num_batches):
+        import pdb
+        pdb.set_trace()
+        if step < num_batches - 1 and not self._all_grads:
+            return
         if self._updates is None:
             self._updates = {}
             for n, p in self.model.state_dict(keep_vars=True).items():
@@ -339,12 +343,15 @@ class _FOWrapper(BaseWrapper):
                 continue
 
             if self._all_grads is True:
-                trajectory = (self.model.state_dict()[n].data - p.data) / num_batches
-                self._updates[n].add_(trajectory)
+                step_grad = p.grad.data / num_batches
+                self._updates[n].add_(step_grad)
+                if step == 0:
+                    self._norms[n].append(step_grad.norm(2))
+                else:
+                    self._norms[n].add_(step_grad.norm(2))
             else:
                 self._updates[n].add_(p.grad.data)
-
-            self._norms[n].append(p.grad.data.norm(2))
+                self._norms[n].append(p.grad.data.norm(2))
 
     def _final_meta_update(self):
         for n, p in self._updates.items():
@@ -405,18 +412,6 @@ class ReptileWrapper(_FOWrapper):
         trainable_params = filter(lambda p: p.requires_grad, self._container.parameters())
         self.optimizer = self.optimizer_cls(
             trainable_params, **self.optimizer_kwargs)
-
-    def run_task(self, task, train, meta_train):
-        if meta_train:
-            self._counter += 1
-        if train:
-            self._container.load_state_dict(self.model.state_dict(keep_vars=True))
-            self._container.train()
-            self.optimizer.zero_grad()
-        else:
-            self._container.eval()
-
-        return self.run_batches(task, self.optimizer, train=train, meta_train=meta_train)
 
 
 @Wrapper.register("fomaml")
