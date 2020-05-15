@@ -37,13 +37,18 @@ class Wrapper(Registrable, FromParams):
 class MultiWrapper(Wrapper):
     def __init__(self,
                  model: Model,
-                 meta_optimizer: torch.optim.Optimizer):
+                 meta_optimizer: torch.optim.Optimizer,
+                 loss_ratios_per_step: List[Dict[str, int]] = None):
         super(MultiWrapper, self).__init__()
         self._counter = 0
         self.model = model
-        self.forward_kwargs = {
-            'return_metric': True,
-        }
+        def forward_kwargs(step):
+            ratios = {"dep": 1.0, "pos": 0.0}
+            if loss_ratios_per_step is not None:
+                ratios = loss_ratios_per_step[step]
+            return {'return_metric': True,
+                    'loss_ratios': ratios}
+        self.forward_kwargs = forward_kwargs
 
     @property
     def container(self):
@@ -73,7 +78,7 @@ class MultiWrapper(Wrapper):
         for n, inputs in enumerate(batches):
             inputs = move_to_device(inputs, device)
 
-            output_dict = self.model(**inputs, **self.forward_kwargs)
+            output_dict = self.model(**inputs, **self.forward_kwargs(n))
             loss = output_dict["loss"]
             metric = output_dict["metric"]
 
