@@ -26,6 +26,7 @@ from allennlp.nn import util as nn_util
 
 logger = logging.getLogger(__name__)
 
+INF = 1e-10
 
 # We want to warn people that tqdm ignores metrics that start with underscores
 # exactly once. This variable keeps track of whether we have.
@@ -282,3 +283,112 @@ def get_lang_mean(lang_mean_dir):
     state_dict = torch.load(lang_mean_dir.joinpath("model_state_epoch_1.th"))
     return state_dict["mean"]
 
+
+def get_dir_mask(sent_lens):
+    batch_size = len(sent_lens)
+    max_sent_len = max(sent_lens)
+    left_ids = torch.arange(max_sent_len).to(
+        sent_lens.device).view(1, -1).expand(max_sent_len, -1)
+    right_ids = torch.arange(max_sent_len).to(
+        sent_lens.device).view(-1, 1).expand(-1, max_sent_len)
+    left_mask = left_ids < right_ids
+    right_mask = left_ids > right_ids
+    length_mask = nn_util.get_mask_from_sequence_lengths(sent_lens, max_sent_len)
+    mask = length_mask.unsqueeze(1) & length_mask.unsqueeze(2)
+    left_mask = left_mask.unsqueeze(0).expand(batch_size, -1, -1) & mask
+    right_mask = right_mask.unsqueeze(0).expand(batch_size, -1, -1) & mask
+    return left_mask, right_mask
+
+
+def avg_loss_func(loss, weights_batch_sum, average='batch'):
+    if average == "batch":
+        # shape : (batch_size,)
+        per_batch_loss = loss / (weights_batch_sum + 1e-13)
+        num_non_empty_sequences = (weights_batch_sum > 0).float().sum() + 1e-13
+        return per_batch_loss.sum() / num_non_empty_sequences
+    elif average == "token":
+        return loss.sum() / (weights_batch_sum.sum() + 1e-13)
+    else:
+        # shape : (batch_size,)
+        per_batch_loss = loss / (weights_batch_sum + 1e-13)
+        return per_batch_loss
+
+
+def memoize(func):
+    mem = {}
+
+    def helper(*args, **kwargs):
+        key = (args, frozenset(list(kwargs.items())))
+        if key not in mem:
+            mem[key] = func(*args, **kwargs)
+        return mem[key]
+
+    return helper
+
+
+@memoize
+def constituent_index(sentence_length, multiroot):
+    counter_id = 0
+    basic_span = []
+    id_2_span = {}
+    for left_idx in range(sentence_length):
+        for right_idx in range(left_idx, sentence_length):
+            for dir in range(2):
+                id_2_span[counter_id] = (left_idx, right_idx, dir)
+                counter_id += 1
+
+    span_2_id = {s: id for id, s in list(id_2_span.items())}
+
+    for i in range(sentence_length):
+        if i != 0:
+            id = span_2_id.get((i, i, 0))
+            basic_span.append(id)
+        id = span_2_id.get((i, i, 1))
+        basic_span.append(id)
+
+    ijss = []
+    ikcs = [[] for _ in range(counter_id)]
+    ikis = [[] for _ in range(counter_id)]
+    kjcs = [[] for _ in range(counter_id)]
+    kjis = [[] for _ in range(counter_id)]
+
+    for l in range(1, sentence_length):
+        for i in range(sentence_length - l):
+            j = i + l
+            for dir in range(2):
+                ids = span_2_id[(i, j, dir)]
+                for k in range(i, j + 1):
+                    if dir == 0:
+                        if k < j:
+                            # two complete spans to form an incomplete span
+                            idli = span_2_id[(i, k, dir + 1)]
+                            ikis[ids].append(idli)
+                            idri = span_2_id[(k + 1, j, dir)]
+                            kjis[ids].append(idri)
+                            # one complete span,one incomplete span to form a complete span
+                            idlc = span_2_id[(i, k, dir)]
+                            ikcs[ids].append(idlc)
+                            idrc = span_2_id[(k, j, dir)]
+                            kjcs[ids].append(idrc)
+
+                    else:
+                        if k < j and ((not (i == 0 and k != 0) and not multiroot) or multiroot):
+                            # two complete spans to form an incomplete span
+                            idli = span_2_id[(i, k, dir)]
+                            ikis[ids].append(idli)
+                            idri = span_2_id[(k + 1, j, dir - 1)]
+                            kjis[ids].append(idri)
+                        if k > i:
+                            # one incomplete span,one complete span to form a complete span
+                            idlc = span_2_id[(i, k, dir)]
+                            ikcs[ids].append(idlc)
+                            idrc = span_2_id[(k, j, dir)]
+                            kjcs[ids].append(idrc)
+
+                ijss.append(ids)
+
+    return span_2_id, id_2_span, ijss, ikcs, ikis, kjcs, kjis, basic_span
+
+
+def _divmod(input, other):
+    return input // other, input % other
