@@ -375,3 +375,45 @@ class NeuralLDMVModel(Model):
         #batch_unary_scores = torch.gather(unary_scores, 3, words_expand).squeeze(3)
 
         return batch_transition_scores, batch_decision_scores, batch_unary_scores
+
+    def _get_batch_scores(self,
+                          attach_left_scores,
+                          attach_right_scores,
+                          stop_left_scores,
+                          stop_right_scores,
+                          root_attach_left_scores,
+                          unary_scores,
+                          mask):
+        placeholder = transition_scores
+        assert self.n_cvals == 1
+
+        n_states = self.n_states
+        # add root
+        batch_size, sent_len, _ = unary_scores.size()
+        batch_transition_scores = placeholder.new_full(
+            (batch_size, sent_len, sent_len, n_states, n_states, self.n_cvals), -INF)
+        batch_decision_scores = placeholder.new_full(
+            (batch_size, sent_len, n_states, self.n_dirs, self.n_vals, self.cls_num), -INF)
+        sent_lens = mask.float().sum(dim=-1)
+        left_mask, right_mask = get_dir_mask(sent_lens)
+        left_mask = left_mask.view(batch_size, sent_len, sent_len, 1, 1).expand_as(batch_transition_scores[..., 0])
+        right_mask = right_mask.view(batch_size, sent_len, sent_len, 1, 1).expand_as(batch_transition_scores[..., 0])
+
+        batch_transition_scores[..., 0] = torch.where(
+            left_mask, transition_scores[0].view(1, 1, 1, n_states, n_states)\
+            .expand_as(batch_transition_scores[..., 0]),
+            batch_transition_scores[..., v])
+        batch_transition_scores[..., 0] = torch.where(
+            right_mask, transition_scores[1].view(1, 1, 1, n_states, n_states)\
+            .expand_as(batch_transition_scores[..., 0]),
+            batch_transition_scores[..., 0])
+
+        for v in range(self.n_vals):
+            batch_decision_scores[..., 0, v, :] = \
+                decision_scores[v, 0].view(1, 1, n_states, -1).expand(batch_size, sent_len, -1, -1)
+            batch_decision_scores[..., 1, v, :] = \
+                decision_scores[v, 1].view(1, 1, n_states, -1).expand(batch_size, sent_len, -1, -1)
+
+        batch_unary_scores = unary_scores.transpose(0, 1)[words, :]
+
+        return batch_transition_scores, batch_decision_scores, batch_unary_scores
