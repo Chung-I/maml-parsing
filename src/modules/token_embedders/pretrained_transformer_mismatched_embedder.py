@@ -33,8 +33,10 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
         max_length: int = None,
         requires_grad: bool = True,
         layer_dropout: float = 0.0,
+        bert_dropout: float = 0.0,
         dropout: float = 0.0,
         combine_layers: str = "mix",
+        adapter_size: int = 8,
         ) -> None:
         super().__init__()
         # The matched version v.s. mismatched
@@ -43,8 +45,10 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
             max_length=max_length,
             requires_grad=requires_grad,
             layer_dropout=layer_dropout,
+            bert_dropout=bert_dropout,
             dropout=dropout,
             combine_layers=combine_layers,
+            adapter_size=adapter_size,
         )
 
     @overrides

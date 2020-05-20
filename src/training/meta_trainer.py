@@ -311,7 +311,13 @@ class MetaTrainer(TrainerBase):
         self.optim_D = discriminator_optimizer
 
         self.has_VIB = hasattr(self.model, 'VIB') and self.model.VIB and self.model.VIB.beta > 0
-        self.has_pos = self.model._predict_pos
+        self.has_pos = hasattr(self.model, '_predict_pos') and self.model._predict_pos
+
+        self.batch_generators = {task: self.iterator(train_data, shuffle=self.shuffle)
+            for task, train_data in self.train_datas.items()}
+        self.batch_group_generators = {task: lazy_groups_of(
+            batch_generator, self._num_gradient_accumulation_steps
+        ) for task, batch_generator in self.batch_generators.items()}
 
         def update_hook(norms):
             assert log_grad_norm in ["none", 'total', 'var']
@@ -381,18 +387,11 @@ class MetaTrainer(TrainerBase):
         # Set the model to "train" mode.
         self._pytorch_model.train()
 
-        # Get tqdm for the training batches
-
-        batch_generators = {task: self.iterator(train_data, num_epochs=1, shuffle=self.shuffle)
-            for task, train_data in self.train_datas.items()}
-        batch_group_generators = {task: lazy_groups_of(
-            batch_generator, self._num_gradient_accumulation_steps
-        ) for task, batch_generator in batch_generators.items()}
         num_training_batches = [math.ceil(
             self.iterator.get_num_batches(train_data) / self._num_gradient_accumulation_steps
         ) for task, train_data in self.train_datas.items()]
         assert len(set(num_training_batches)) == 1, "num_training_batches doesn't agree"
-        tasks = list(batch_group_generators.keys())
+        tasks = list(self.batch_group_generators.keys())
         num_tasks = len(tasks)
 
         #if isinstance(self._learning_rate_scheduler, SlantedTriangular):
@@ -415,7 +414,7 @@ class MetaTrainer(TrainerBase):
         for _ in tqdm_bar:
             randperms = torch.randperm(len(tasks)).tolist()
             sampled_tasks = [tasks[idx] for idx in randperms[:self._tasks_per_step]]
-            sampled_task_generators = [next(batch_group_generators[task]) for task in sampled_tasks]
+            sampled_task_generators = [next(self.batch_group_generators[task]) for task in sampled_tasks]
 
             batches_this_epoch += 1
             self._batch_num_total += 1

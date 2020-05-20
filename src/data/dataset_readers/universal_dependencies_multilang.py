@@ -51,7 +51,7 @@ def get_file_paths(pathname: str, languages: List[str]):
     paths = []
     for file_path in glob.glob(pathname):
         base = os.path.splitext(os.path.basename(file_path))[0]
-        lang_id = base.split("_")[0]
+        lang_id = base.split("-")[0]
         if lang_id == base:
             lang_id = base.split("-")[0]
         if lang_id in languages:

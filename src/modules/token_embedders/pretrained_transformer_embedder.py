@@ -10,6 +10,7 @@ import torch.nn.functional as F
 
 from allennlp.data.token_indexers import PretrainedTransformerIndexer
 from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
+from allennlp.modules import InputVariationalDropout
 from allennlp.nn.util import batched_index_select
 
 from src.data.token_indexers import PretrainedAutoTokenizer
@@ -26,19 +27,22 @@ class PretrainedAutoModel:
     _cache: Dict[str, AutoModel] = {}
 
     @classmethod
-    def load(cls, model_name: str, tokenizer_name: str, cache_model: bool = True) -> AutoModel:
+    def load(cls, model_name: str, tokenizer_name: str, cache_model: bool = True, adapter_size: int = 8) -> AutoModel:
+        has_adapter = False
+        if model_name.startswith("adapter"):
+            has_adapter = True
+            _, model_name = model_name.split("_")
+
         if model_name in cls._cache:
             return PretrainedAutoModel._cache[model_name]
 
-        pretrained_config = AutoConfig.from_pretrained(tokenizer_name,
+        pretrained_config = AutoConfig.from_pretrained(model_name,
                                                        output_hidden_states=True)
-        if model_name.startswith("scratch"):
-            from transformers import XLMRobertaModel, XLMRobertaConfig
-            _, num_layers = model_name.split("-")
-            model_config = XLMRobertaConfig(num_hidden_layers=int(num_layers),
-                                            vocab_size=pretrained_config.vocab_size,
-                                            output_hidden_states=True)
-            model = XLMRobertaModel(config=model_config)
+
+        if has_adapter:
+            from src.modules.modeling_adapter_bert import AdapterBertModel
+            pretrained_config.adapter_size = adapter_size
+            model = AdapterBertModel.from_pretrained(model_name, config=pretrained_config)
         else:
             model = AutoModel.from_pretrained(model_name, config=pretrained_config)
 
@@ -69,13 +73,15 @@ class TransformerEmbedder(TokenEmbedder):
                  model_name: str,
                  max_length: int = None,
                  layer_dropout: float = 0.0,
+                 bert_dropout: float = 0.0,
                  dropout: float = 0.0,
-                 combine_layers: str = "mix") -> None:
+                 combine_layers: str = "mix",
+                 adapter_size: int = 8) -> None:
         super().__init__()
         placeholder = model_name.split("_")
-        model_name = placeholder[0]
         tokenizer_name = placeholder[-1]
-        self.transformer_model = PretrainedAutoModel.load(model_name, tokenizer_name)
+        self.transformer_model = PretrainedAutoModel.load(model_name, tokenizer_name,
+                                                          adapter_size=adapter_size)
         self._max_length = max_length
         # I'm not sure if this works for all models; open an issue on github if you find a case
         # where it doesn't work.
@@ -91,6 +97,7 @@ class TransformerEmbedder(TokenEmbedder):
         else:
             self._scalar_mix = None
 
+        self._bert_dropout = InputVariationalDropout(bert_dropout)
         self.set_dropout(dropout)
 
         tokenizer = PretrainedAutoTokenizer.load(tokenizer_name)
@@ -160,6 +167,7 @@ class TransformerEmbedder(TokenEmbedder):
         layer_outputs = self.transformer_model(
             input_ids=token_ids, token_type_ids=type_ids, attention_mask=transformer_mask
         )[-1][1:]
+        layer_outputs = [self._bert_dropout(layer_output) for layer_output in layer_outputs]
         if self._scalar_mix is not None:
             embeddings = self._scalar_mix(layer_outputs, transformer_mask)
         elif self.combine_layers == "last":
@@ -364,16 +372,23 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
         max_length: int = None,
         requires_grad: bool = True,
         layer_dropout: float = 0.0,
+        bert_dropout: float = 0.0,
         dropout: float = 0.0,
         combine_layers: str = "mix",
+        adapter_size: int = 8,
     ) -> None:
 
         super().__init__(
             model_name=model_name,
             max_length=max_length,
             layer_dropout=layer_dropout,
+            bert_dropout=bert_dropout,
             dropout=dropout,
             combine_layers=combine_layers,
+            adapter_size=adapter_size,
         )
-        for param in self.transformer_model.parameters():
-            param.requires_grad = requires_grad
+        for name, param in self.transformer_model.named_parameters():
+            if model_name.startswith("adapter") and 'adapter' in name:
+                param.requires_grad = True
+            else:
+                param.requires_grad = requires_grad
