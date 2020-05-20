@@ -12,6 +12,7 @@ local HIDDEN_SIZE = 128;
 local BIDIR = true;
 local NUM_DIRS = if BIDIR then 2 else 1;
 local TAG_DIM = 768;
+local TOKEN_EMBEDDER_KEY = "bert";
 
 local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
@@ -21,7 +22,7 @@ local BASE_READER(x, alternate=true) = {
     "is_first_pass_for_vocab": false,
     "lazy": true,
     "token_indexers": {
-        "bert": {
+        [TOKEN_EMBEDDER_KEY]: {
             "type": "transformer_pretrained_mismatched",
             "model_name": MODEL_NAME,
             "max_length": MAX_LEN,
@@ -57,7 +58,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     "model": {
         "text_field_embedder": {
             "token_embedders": {
-                "bert": {
+                [TOKEN_EMBEDDER_KEY]: {
                     "type": "transformer_pretrained_mismatched",
                     "model_name": "adapter_" + MODEL_NAME,
                     "requires_grad": false,
@@ -71,11 +72,12 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         },
         "type": "ud_biaffine_parser_multilang_vib",
         "arc_representation_dim": 768,
-        "dropout": 0.33,
-        "lexical_dropout": 0.33,
-        "pos_dropout": 0.33,
-        "dropout_location": "lm",
-        "input_dropout": 0.33,
+        "dropout": 0.0,
+        "token_embedder_key": TOKEN_EMBEDDER_KEY,
+        "lexical_dropout": 0.2,
+        "pos_dropout": 0.0,
+        "dropout_location": "input",
+        "input_dropout": 0.0,
         "tag_dim": TAG_DIM,
         "encoder": {
             "type": "pass_through",

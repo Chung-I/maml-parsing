@@ -124,6 +124,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         typo_encoder: Seq2VecEncoder = None,
         typo_feedforward: FeedForward = None,
         predict_pos: bool = False,
+        token_embedder_key: str = None,
         initializer: InitializerApplicator = InitializerApplicator(),
         regularizer: Optional[RegularizerApplicator] = None,
     ) -> None:
@@ -243,6 +244,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         self._predict_pos = predict_pos
         self._num_pos_tags = self.vocab.get_vocab_size("pos")
         self.tag_projection_layer = None
+        self._token_embedder_key = token_embedder_key
         if predict_pos:
             self.tag_projection_layer = TimeDistributed(
                 torch.nn.Linear(tag_dim, self._num_pos_tags)
@@ -272,13 +274,12 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         batch_lang: str = None,
     ) -> torch.Tensor:
 
-
         if self._dropout_location == 'input':
-            words["roberta"]["token_ids"] = self._apply_token_dropout(
-                words["roberta"]["token_ids"],
-                words["roberta"]["mask"],
+            words[self._token_embedder_key]["token_ids"] = self._apply_token_dropout(
+                words[self._token_embedder_key]["token_ids"],
+                words[self._token_embedder_key]["mask"],
                 self._lexical_dropout,
-                words["roberta"]["offsets"],
+                words[self._token_embedder_key]["offsets"],
                 form='subword',
             )
 
@@ -667,7 +668,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             drop_mask = self._get_dropout_mask(mask.bool(),
                                                p=dropout,
                                                training=self.training)
-            drop_token = self._tokenizer.encode("<mask>", add_special_tokens=False)[0]
+            drop_token = self._tokenizer.encode("[MASK]", add_special_tokens=False)[0]
             words = mask_subwords(words, offsets, drop_mask, drop_token)
 
         return words
