@@ -328,8 +328,6 @@ class _FOWrapper(BaseWrapper):
         return super(_FOWrapper, self).run_task(task, train, meta_train)
 
     def _partial_meta_update(self, step, num_batches):
-        import pdb
-        pdb.set_trace()
         if step < num_batches - 1 and not self._all_grads:
             return
         if self._updates is None:
@@ -353,7 +351,7 @@ class _FOWrapper(BaseWrapper):
                 if step == 0:
                     self._norms[n].append(step_grad.norm(2))
                 else:
-                    self._norms[n].add_(step_grad.norm(2))
+                    self._norms[n][-1].add_(step_grad.norm(2))
             else:
                 self._updates[n].add_(p.grad.data)
                 self._norms[n].append(p.grad.data.norm(2))
