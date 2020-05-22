@@ -19,7 +19,7 @@ import torch
 from allennlp.common.checks import ConfigurationError
 from allennlp.common import Params
 from allennlp.common.params import with_fallback
-from allennlp.commands.make_vocab import make_vocab_from_params
+#from allennlp.commands.make_vocab import make_vocab_from_params
 from allennlp.commands.predict import _PredictManager
 from allennlp.common.checks import check_for_gpu
 from allennlp.common.file_utils import cached_path
@@ -64,32 +64,32 @@ def merge_configs(configs: List[Params]) -> Params:
     return configs[0]
 
 
-def cache_vocab(params: Params, vocab_config_path: str = None):
-    """
-    Caches the vocabulary given in the Params to the filesystem. Useful for large datasets that are run repeatedly.
-    :param params: the AllenNLP Params
-    :param vocab_config_path: an optional config path for constructing the vocab
-    """
-    if "vocabulary" not in params or "directory_path" not in params["vocabulary"]:
-        return
-
-    vocab_path = params["vocabulary"]["directory_path"]
-
-    if os.path.exists(vocab_path):
-        if os.listdir(vocab_path):
-            return
-
-        # Remove empty vocabulary directory to make AllenNLP happy
-        try:
-            os.rmdir(vocab_path)
-        except OSError:
-            pass
-
-    vocab_config_path = vocab_config_path if vocab_config_path else VOCAB_CONFIG_PATH
-
-    params = merge_configs([params, Params.from_file(vocab_config_path)])
-    params["vocabulary"].pop("directory_path", None)
-    make_vocab_from_params(params, os.path.split(vocab_path)[0])
+#def cache_vocab(params: Params, vocab_config_path: str = None):
+#    """
+#    Caches the vocabulary given in the Params to the filesystem. Useful for large datasets that are run repeatedly.
+#    :param params: the AllenNLP Params
+#    :param vocab_config_path: an optional config path for constructing the vocab
+#    """
+#    if "vocabulary" not in params or "directory_path" not in params["vocabulary"]:
+#        return
+#
+#    vocab_path = params["vocabulary"]["directory_path"]
+#
+#    if os.path.exists(vocab_path):
+#        if os.listdir(vocab_path):
+#            return
+#
+#        # Remove empty vocabulary directory to make AllenNLP happy
+#        try:
+#            os.rmdir(vocab_path)
+#        except OSError:
+#            pass
+#
+#    vocab_config_path = vocab_config_path if vocab_config_path else VOCAB_CONFIG_PATH
+#
+#    params = merge_configs([params, Params.from_file(vocab_config_path)])
+#    params["vocabulary"].pop("directory_path", None)
+#    make_vocab_from_params(params, os.path.split(vocab_path)[0])
 
 
 def get_ud_treebank_files(dataset_dir: str, treebanks: List[str] = None) -> Dict[str, Tuple[str, str, str]]:

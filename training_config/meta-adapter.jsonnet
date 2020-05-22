@@ -118,10 +118,15 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "validation_metric": "+LAS_AVG",
         "save_embedder": true,
         "num_serialized_models_to_keep": -1,
-        "num_gradient_accumulation_steps": 1,
+        "num_gradient_accumulation_steps": 2,
         "tasks_per_step": std.length(TRAIN_LANGS),
         "wrapper": {
-            "type": "multi",
+            "type": "reptile",
+            "optimizer_cls": "Adam",
+            "optimizer_kwargs": {
+                "lr": 3e-4
+            },
+            // "inherit": true,
         },
     }
 }
