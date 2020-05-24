@@ -34,8 +34,8 @@ local BASE_READER(x, alternate=true) = {
     "read_language": false,
 };
 
-local TRAIN_LANGS = ['ar_padt', 'eu_bdt', 'zh_gsd', 'en_ewt', 'fi_tdt', 'he_htb', 'hi_hdtb',
-'it_isdt', 'ja_gsd', 'ko_gsd', 'ru_syntagrus', 'sv_talbanken', 'tr_imst'];
+// local TRAIN_LANGS = ['ar_padt', 'eu_bdt', 'zh_gsd', 'en_ewt', 'fi_tdt', 'he_htb', 'hi_hdtb', 'it_isdt', 'ja_gsd', 'ko_gsd', 'ru_syntagrus', 'sv_talbanken', 'tr_imst'];
+local TRAIN_LANGS = ['af', 'grc', 'pt', 'sv', 'no', 'es', 'zh', 'fro', 'ja', 'tr', 'hi', 'ar', 'ca', 'hr', 'el', 'hu', 'la', 'fr', 'fi', 'eu', 'ko', 'et', 'id', 'fa', 'uk', 'got', 'pl', 'ug', 'vi', 'da', 'ru', 'gl', 'it', 'cu', 'cs', 'he', 'sr', 'en', 'sk', 'bg', 'sl', 'ur', 'nl', 'lv', 'de', 'ro'];
 
 local READERS(xs, alternate=true) = {
     [x]: BASE_READER(x, alternate) for x in xs
@@ -53,7 +53,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     "iterator": {
         "type": "bucket",
         "batch_size": 16,
-        "sorting_keys": [["words", "bert___mask"]],
+	"sorting_keys": [["words", TOKEN_EMBEDDER_KEY + "___mask"]],
         "instances_per_epoch": 64000,
     },
     "model": {
@@ -119,7 +119,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "save_embedder": true,
         "num_serialized_models_to_keep": -1,
         "num_gradient_accumulation_steps": 2,
-        "tasks_per_step": std.length(TRAIN_LANGS),
+        "tasks_per_step": 10,
         "wrapper": {
             "type": "reptile",
             "optimizer_cls": "Adam",
