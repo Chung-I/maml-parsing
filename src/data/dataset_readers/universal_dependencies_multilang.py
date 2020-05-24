@@ -49,9 +49,11 @@ def get_file_paths(pathname: str, languages: List[str]):
     A list of tuples (language id, file path).
     """
     paths = []
+    lang = languages[0]
+    delimiter = "-" if lang.split("_")[0] != lang else "_"
     for file_path in glob.glob(pathname):
         base = os.path.splitext(os.path.basename(file_path))[0]
-        lang_id = base.split("-")[0]
+        lang_id = base.split(delimiter)[0]
         if lang_id == base:
             lang_id = base.split("-")[0]
         if lang_id in languages:
