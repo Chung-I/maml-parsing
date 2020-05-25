@@ -5,12 +5,14 @@
 // To recompute alignemts for ELMo, refer to: https://github.com/TalSchuster/CrossLingualELMo
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
-local MODEL_NAME = "xlm-roberta-base";
+local MODEL_NAME = "bert-base-multilingual-cased";
 local NUM_EPOCHS = 10;
 local HIDDEN_SIZE = 128;
 local BIDIR = true;
+local BS = 16;
 local NUM_DIRS = if BIDIR then 2 else 1;
 local TAG_DIM = 256;
+local TOKEN_EMBEDDER_KEY = "bert";
 
 local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
@@ -20,7 +22,7 @@ local BASE_READER(x, alternate=true) = {
     "is_first_pass_for_vocab": false,
     "lazy": true,
     "token_indexers": {
-        "roberta": {
+        [TOKEN_EMBEDDER_KEY]: {
             "type": "transformer_pretrained_mismatched",
             "model_name": MODEL_NAME,
             "max_length": MAX_LEN,
@@ -47,8 +49,9 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 16,
-        "sorting_keys": [["words", "roberta___mask"]],
+        "batch_size": BS,
+	"sorting_keys": [["words", TOKEN_EMBEDDER_KEY + "___mask"]],
+	"maximum_samples_per_batch": [TOKEN_EMBEDDER_KEY + "___mask", BS * 256],
         "instances_per_epoch": 160000,
     },
     "model": {
@@ -68,10 +71,6 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
             "dropout": 0.0,
             "bidirectional": BIDIR,
         },
-        "pos_tag_embedding": {
-            "embedding_dim": 100,
-            "vocab_namespace": "pos"
-        },
         "vib": {
           "activation": "leaky_relu",
           "tag_dim": TAG_DIM,
@@ -86,9 +85,9 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "model_name": MODEL_NAME,
         "text_field_embedder": {
             "token_embedders": {
-                "roberta": {
+                [TOKEN_EMBEDDER_KEY]: {
                     "type": "transformer_pretrained_mismatched",
-                    "model_name": "xlm-roberta-base",
+                    "model_name": MODEL_NAME,
                     "requires_grad": false,
                     "max_length": MAX_LEN,
                     "layer_dropout": 0.0,
