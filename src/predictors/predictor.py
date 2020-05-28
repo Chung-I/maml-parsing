@@ -72,6 +72,10 @@ class UDPredictor(Predictor):
 
     @overrides
     def dump_line(self, outputs: JsonDict) -> str:
+        comment_lines = []
+        if 'per_sample_loss' in outputs:
+            loss_comment = f"loss: {outputs['per_sample_loss']}"
+            comment_lines.append(loss_comment)
         word_count = len([word for word in outputs["words"]])
         lines = zip(*[outputs[k] if k in outputs else ["_"] * word_count
                       for k in ["ids", "words", "lemmas", "upos", "xpos", "feats",
@@ -96,4 +100,5 @@ class UDPredictor(Predictor):
             row = "\t".join(line) + "".join(["\t_"] * 2)
             output_lines.append(row)
 
-        return "\n".join(output_lines) + "\n\n"
+        comment_lines = list(map(lambda line: f"# {line}", comment_lines))
+        return  "\n".join(comment_lines + output_lines) + "\n\n"

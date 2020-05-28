@@ -538,7 +538,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         head_tag_representation, child_tag_representation, attended_arcs, mask, \
             head_tags, head_indices = self._project(encoded_text, mask, head_tags, head_indices,
                                                     return_arc_representation=True)
-        predicted_heads, predicted_head_tags, mask, arc_nll, tag_nll = self._parse(
+        predicted_heads, predicted_head_tags, mask, arc_nll, tag_nll, per_sample_loss = \
+        self._parse(
             head_tag_representation, child_tag_representation,
             attended_arcs, mask, head_tags, head_indices,
         )
@@ -598,6 +599,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             "tag_loss": tag_nll,
             "loss": loss,
             "mask": mask,
+            "per_sample_loss": per_sample_loss,
         })
 
         if metric:
@@ -736,7 +738,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             )
         if head_indices is not None and head_tags is not None:
 
-            arc_nll, tag_nll = self._construct_loss(
+            arc_nll, tag_nll, per_sample_loss = self._construct_loss(
                 head_tag_representation=head_tag_representation,
                 child_tag_representation=child_tag_representation,
                 attended_arcs=attended_arcs,
@@ -745,7 +747,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 mask=mask,
             )
         else:
-            arc_nll, tag_nll = self._construct_loss(
+            arc_nll, tag_nll, per_sample_loss = self._construct_loss(
                 head_tag_representation=head_tag_representation,
                 child_tag_representation=child_tag_representation,
                 attended_arcs=attended_arcs,
@@ -754,7 +756,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 mask=mask,
             )
 
-        return predicted_heads, predicted_head_tags, mask, arc_nll, tag_nll
+        return predicted_heads, predicted_head_tags, mask, arc_nll, tag_nll, per_sample_loss
 
     def _construct_loss(
         self,
@@ -833,9 +835,14 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         # 1 per sequence in the batch, to account for the symbolic HEAD token.
         valid_positions = mask.sum() - batch_size
 
+        import pdb
+        pdb.set_trace()
         arc_nll = -arc_loss.sum() / valid_positions.float()
         tag_nll = -tag_loss.sum() / valid_positions.float()
-        return arc_nll, tag_nll
+        arc_sample_nll = -arc_loss.sum(dim=1) / (mask.sum(dim=1) - 1).float()
+        tag_sample_nll = -tag_loss.sum(dim=1) / (mask.sum(dim=1) - 1).float()
+        per_sample_loss = arc_sample_nll + tag_sample_nll
+        return arc_nll, tag_nll, per_sample_loss
 
     def _greedy_decode(
         self,
