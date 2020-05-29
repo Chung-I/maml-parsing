@@ -19,6 +19,12 @@ from allennlp.data.instance import Instance
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
 
+BLANK_FILES = ['ja_bccwj-ud-train',
+               'ar_nyuad-ud-train',
+               'en_esl-ud-train',
+               'fr_ftb-ud-train',
+               'qhe_heincs-ud-train']
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,6 +59,11 @@ def get_file_paths(pathname: str, languages: List[str]):
     delimiter = "-" if lang.split("_")[0] != lang else "_"
     for file_path in glob.glob(pathname):
         base = os.path.splitext(os.path.basename(file_path))[0]
+        if base in BLANK_FILES:
+            logger.info(
+                "Skipping %s language at %s since it has no text", lang, file_path
+            )
+            continue
         lang_id = base.split(delimiter)[0]
         if lang_id == base:
             lang_id = base.split("-")[0]

@@ -50,6 +50,7 @@ parser.add_argument('-m')
 args = parser.parse_args()
 
 def maybe_add_pretrained_embeddings(serialization_dir, weights_file, epoch):
+    is_tmp_weight = False
     if torch.cuda.is_available():
         model_state = torch.load(os.path.join(serialization_dir, weights_file))
         pretrained_model_state = torch.load(os.path.join(f"ckpts/{os.environ['BASE_MODEL']}",
@@ -62,6 +63,7 @@ def maybe_add_pretrained_embeddings(serialization_dir, weights_file, epoch):
                                             map_location=torch.device('cpu'))
 
     if len(set(pretrained_model_state.keys()) - set(model_state.keys())) > 0:
+        is_tmp_weight = True
         full_model_state = {}
         for key, value in pretrained_model_state.items():
             if not key in model_state:
@@ -77,7 +79,7 @@ def maybe_add_pretrained_embeddings(serialization_dir, weights_file, epoch):
     else:
         new_model_state = model_state
         full_model_weights_file = weights
-    return full_model_weights_file
+    return full_model_weights_file, is_tmp_weight
 
 
 from allennlp.models.archival import archive_model
@@ -88,7 +90,7 @@ else:
     weights = "best.th"
     archive_path = os.path.join(args.s, f"model.tar.gz")
 
-weights = maybe_add_pretrained_embeddings(args.s, weights, args.n)
+weights, is_tmp_weight = maybe_add_pretrained_embeddings(args.s, weights, args.n)
 
 config_fname =os.path.join(args.s, CONFIG_NAME)
 old_config_fname =os.path.join(args.s, OLD_CONFIG_NAME)
@@ -98,7 +100,8 @@ if args.m:
     full_config.to_file(config_fname)
 
 archive_model(args.s, weights, archive_path)
-os.remove(os.path.join(args.s, weights))
+if is_tmp_weight:
+    os.remove(os.path.join(args.s, weights))
 
 if args.m:
     os.rename(old_config_fname, config_fname)

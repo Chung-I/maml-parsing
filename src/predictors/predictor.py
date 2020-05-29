@@ -74,7 +74,7 @@ class UDPredictor(Predictor):
     def dump_line(self, outputs: JsonDict) -> str:
         comment_lines = []
         if 'per_sample_loss' in outputs:
-            loss_comment = f"loss: {outputs['per_sample_loss']}"
+            loss_comment = f"loss = {outputs['per_sample_loss']}"
             comment_lines.append(loss_comment)
         word_count = len([word for word in outputs["words"]])
         lines = zip(*[outputs[k] if k in outputs else ["_"] * word_count

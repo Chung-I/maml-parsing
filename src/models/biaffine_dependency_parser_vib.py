@@ -122,6 +122,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         inspect_layer: str = 'encoder',
         lang_mean_regex: str = None,
         ft_lang_mean_dir: str = None,
+        zs_lang_mean_dir: Optional[List[str]] = None,
         typo_encoder: Seq2VecEncoder = None,
         typo_feedforward: FeedForward = None,
         predict_pos: bool = False,
@@ -233,6 +234,11 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             ft_lang_mean = get_lang_mean(ft_lang_mean_dir)
             self._ft_lang_mean = torch.nn.Parameter(ft_lang_mean, requires_grad=False)
             
+        self._zs_lang_mean = None
+        if zs_lang_mean_dir is not None:
+            anchor_lang_mean = get_lang_mean(zs_lang_mean_dir[0])
+            zs_lang_mean = get_lang_mean(zs_lang_mean_dir[1])
+            self._zs_lang_mean = zs_lang_mean - anchor_lang_mean# - zs_lang_mean
 
         assert adv_layer in ['vib', 'encoder']
         self._adv_layer = adv_layer
@@ -288,14 +294,15 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             )
 
         embedded_text_input = self.text_field_embedder(words, lang=batch_lang)
-        if self._lang_means is not None:
+        if self._lang_means is not None or self._ft_lang_mean is not None or self._zs_lang_mean is not None:
             batch_size, seq_len, _ = embedded_text_input.size()
+            lang_mean = self._zs_lang_mean if self._zs_lang_mean is not None else self._ft_lang_mean
             if langs is None:
-                means = self._ft_lang_mean.view(1, 1, -1).repeat(batch_size, seq_len, 1)
+                means = lang_mean.view(1, 1, -1).repeat(batch_size, seq_len, 1)
             else:
                 expanded_langs = langs.unsqueeze(-1).repeat(1, seq_len)
                 means = self._lang_means[expanded_langs] 
-            embedded_text_input = embedded_text_input - means
+            embedded_text_input = embedded_text_input - means.to(embedded_text_input.device)
         if self._dropout_location == 'lm':
             embedded_text_input = self._apply_token_dropout(embedded_text_input,
                                                             mask,

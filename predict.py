@@ -37,26 +37,29 @@ args = parser.parse_args()
 
 import_submodules(args.include_package)
 
-archive_dir = Path(args.archive).resolve().parent
-
-print(archive_dir)
-if not os.path.isfile(archive_dir / "best.th"):
-    with tarfile.open(args.archive) as tar:
-        tar.extractall(archive_dir)
+archive_dir = Path(args.archive)
 
 config_file = archive_dir / "config.json"
 overrides = {"dataset_reader": {"read_dependencies": False},
              "validation_dataset_reader": {"read_dependencies": False}}
-
 configs = [Params(overrides), Params.from_file(config_file)]
+
 params = util.merge_configs(configs)
 if params["model"]["type"] == "from_archive":
     model_config_file = str(Path(params["model"]["archive_file"]).parent.joinpath("config.json"))
     model_config = Params.from_file(model_config_file)["model"]
     params['model'] = model_config.as_dict(quiet=True)
     try:
+        lm_name = f"_{os.environ['LM']}" if os.environ.get("LM") else ""
         if os.environ["SHIFT"] == "1":
-            params['model']["ft_lang_mean_dir"] = f"ckpts/{os.environ['FT_LANG']}_mean"
+            params['model']["ft_lang_mean_dir"] = f"ckpts/{os.environ['FT_LANG']}_mean{lm_name}"
+    except (AttributeError, KeyError) as e:
+        pass
+    try:
+        lm_name = f"_{os.environ['LM']}" if os.environ.get("LM") else ""
+        if os.environ["ZS_SHIFT"] == "1":
+            params['model']["zs_lang_mean_dir"] = [f"ckpts/{os.environ['ANCHOR']}_mean{lm_name}",
+                                                   f"ckpts/{os.environ['FT_LANG']}_mean{lm_name}"]
     except (AttributeError, KeyError) as e:
         pass
     try:

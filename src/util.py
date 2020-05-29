@@ -13,6 +13,7 @@ import tarfile
 import traceback
 import numpy as np
 from tqdm import tqdm
+from itertools import chain
 
 import torch
 
@@ -348,6 +349,9 @@ class _VisualizeManager:
             raise ConfigurationError("stdin is not an option when using a DatasetReader.")
         elif self._dataset_reader is None:
             raise ConfigurationError("To generate instances directly, pass a DatasetReader.")
+        elif isinstance(self._input_file, list):
+            for f in self._input_file:
+                yield from self._dataset_reader.read(f)
         else:
             yield from self._dataset_reader.read(self._input_file)
 
@@ -372,6 +376,27 @@ class _VisualizeManager:
             embeddings += list(map(get_sentence_embedding, results))
         embeddings = np.stack(embeddings)
         return embeddings
+
+    def _get_lang_mean(self):
+        has_reader = self._dataset_reader is not None
+        index = 0
+        states = []
+        def get_sentence_embedding(result):
+            length = len(result['words'])
+            hidden_state = np.array(result['hidden_state'][:length])
+            states.append(torch.from_numpy(hidden_state).float())
+        for batch_data in tqdm(lazy_groups_of(self._get_instance_data(), self._batch_size)):
+            if len(batch_data) == 1:
+                results = [self._predictor.predict_instance(batch_data[0])]
+            else:
+                results = self._predictor.predict_batch_instance(batch_data)
+            for input_instance, output in zip(batch_data, results):
+                result =  self._predictor.dump_line(output)
+                self._maybe_print_to_console_and_file(index, result, str(input_instance))
+                index = index + 1
+            list(map(get_sentence_embedding, results))
+        all_states = torch.cat(states, dim=0)
+        return torch.mean(all_states, dim=0)
 
     def _get_word_embeddings(self):
         has_reader = self._dataset_reader is not None

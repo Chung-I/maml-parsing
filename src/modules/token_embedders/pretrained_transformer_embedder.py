@@ -27,7 +27,8 @@ class PretrainedAutoModel:
     _cache: Dict[str, AutoModel] = {}
 
     @classmethod
-    def load(cls, model_name: str, tokenizer_name: str, cache_model: bool = True, adapter_size: int = 8) -> AutoModel:
+    def load(cls, model_name: str, tokenizer_name: str, cache_model: bool = True,
+             adapter_size: int = 8, pretrained: bool = True) -> AutoModel:
         has_adapter = False
         if model_name.startswith("adapter"):
             has_adapter = True
@@ -44,7 +45,10 @@ class PretrainedAutoModel:
             pretrained_config.adapter_size = adapter_size
             model = AdapterBertModel.from_pretrained(model_name, config=pretrained_config)
         else:
-            model = AutoModel.from_pretrained(model_name, config=pretrained_config)
+            if pretrained:
+                model = AutoModel.from_pretrained(model_name, config=pretrained_config)
+            else:
+                model = AutoModel.from_config(config=pretrained_config)
 
         if cache_model:
             cls._cache[model_name] = model
@@ -76,12 +80,14 @@ class TransformerEmbedder(TokenEmbedder):
                  bert_dropout: float = 0.0,
                  dropout: float = 0.0,
                  combine_layers: str = "mix",
-                 adapter_size: int = 8) -> None:
+                 adapter_size: int = 8,
+                 pretrained: bool = True) -> None:
         super().__init__()
         placeholder = model_name.split("_")
         tokenizer_name = placeholder[-1]
         self.transformer_model = PretrainedAutoModel.load(model_name, tokenizer_name,
-                                                          adapter_size=adapter_size)
+                                                          adapter_size=adapter_size,
+                                                          pretrained=pretrained)
         self._max_length = max_length
         # I'm not sure if this works for all models; open an issue on github if you find a case
         # where it doesn't work.
@@ -376,6 +382,7 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
         dropout: float = 0.0,
         combine_layers: str = "mix",
         adapter_size: int = 8,
+        pretrained: bool = True,
     ) -> None:
 
         super().__init__(
@@ -386,6 +393,7 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
             dropout=dropout,
             combine_layers=combine_layers,
             adapter_size=adapter_size,
+            pretrained=pretrained,
         )
         for name, param in self.transformer_model.named_parameters():
             if model_name.startswith("adapter") and 'adapter' in name:
