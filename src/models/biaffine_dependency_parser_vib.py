@@ -31,6 +31,7 @@ from allennlp.training.metrics import AttachmentScores, Average, CategoricalAccu
 
 from src.models.biaffine_dependency_parser import BiaffineDependencyParser
 from src.modules.vib import ContinuousVIB
+from src.modules.crf import crf_loss
 from src.training.util import get_lang_means, get_lang_mean
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         typo_feedforward: FeedForward = None,
         predict_pos: bool = False,
         token_embedder_key: str = None,
+        use_crf: bool = False,
         initializer: InitializerApplicator = InitializerApplicator(),
         regularizer: Optional[RegularizerApplicator] = None,
     ) -> None:
@@ -259,6 +261,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 Params(vib),
                 embedding_dim=representation_dim,
             )
+
+        self.use_crf = use_crf
         
         initializer(self)
 
@@ -424,7 +428,10 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         attended_arcs = attended_arcs + minus_mask.unsqueeze(2) + minus_mask.unsqueeze(1)
 
         # Shape (batch_size, sequence_length, sequence_length)
-        normalized_arc_logits = F.log_softmax(attended_arcs, dim=2).transpose(1, 2)
+        if not self.use_crf:
+            normalized_arc_logits = F.log_softmax(attended_arcs, dim=2).transpose(1, 2)
+        else:
+            normalized_arc_logits = attended_arcs
 
         return normalized_arc_logits, normalized_pairwise_head_logits, lengths
 
@@ -802,45 +809,54 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         """
         float_mask = mask.float()
         batch_size, sequence_length, _ = attended_arcs.size()
-        # shape (batch_size, 1)
         range_vector = get_range_vector(batch_size, get_device_of(attended_arcs)).unsqueeze(1)
-        # shape (batch_size, sequence_length, sequence_length)
-        normalised_arc_logits = (
-            masked_log_softmax(attended_arcs, mask)
-            * float_mask.unsqueeze(2)
-            * float_mask.unsqueeze(1)
+        timestep_index = get_range_vector(sequence_length, get_device_of(attended_arcs))
+        child_index = (
+            timestep_index.view(1, sequence_length).expand(batch_size, sequence_length).long()
         )
+        if self.use_crf:
+            z = crf_loss(attended_arcs, head_indices, mask)
+            attended_arcs = attended_arcs * float_mask.unsqueeze(2) * float_mask.unsqueeze(1)
+            arc_loss = attended_arcs[range_vector, child_index, head_indices]
+            arc_loss = arc_loss[:, 1:].sum(dim=1) - z
+            if torch.any(arc_loss != arc_loss):
+                logger.warning(f"nan found: {torch.nonzero(arc_loss != arc_loss)}")
+            arc_loss[arc_loss != arc_loss] = 0
+            mask = mask * (arc_loss == arc_loss).float().unsqueeze(-1)
+            float_mask = mask.float()
+        else:
+            normalised_arc_logits = (
+                masked_log_softmax(attended_arcs, mask)
+                * float_mask.unsqueeze(2)
+                * float_mask.unsqueeze(1)
+            )
+            arc_loss = normalised_arc_logits[range_vector, child_index, head_indices]
+            arc_loss = arc_loss[:, 1:]
 
-        # shape (batch_size, sequence_length, num_head_tags)
         head_tag_logits = self._get_head_tags(
             head_tag_representation, child_tag_representation, head_indices
         )
         normalised_head_tag_logits = masked_log_softmax(
             head_tag_logits, mask.unsqueeze(-1)
         ) * float_mask.unsqueeze(-1)
-        # index matrix with shape (batch, sequence_length)
-        timestep_index = get_range_vector(sequence_length, get_device_of(attended_arcs))
-        child_index = (
-            timestep_index.view(1, sequence_length).expand(batch_size, sequence_length).long()
-        )
-        # shape (batch_size, sequence_length)
-        arc_loss = normalised_arc_logits[range_vector, child_index, head_indices]
+
         tag_loss = normalised_head_tag_logits[range_vector, child_index, head_tags]
-        # We don't care about predictions for the symbolic ROOT token's head,
-        # so we remove it from the loss.
-        arc_loss = arc_loss[:, 1:]
         tag_loss = tag_loss[:, 1:]
 
         # The number of valid positions is equal to the number of unmasked elements minus
         # 1 per sequence in the batch, to account for the symbolic HEAD token.
         valid_positions = mask.sum() - batch_size
 
-        import pdb
-        pdb.set_trace()
         arc_nll = -arc_loss.sum() / valid_positions.float()
         tag_nll = -tag_loss.sum() / valid_positions.float()
-        arc_sample_nll = -arc_loss.sum(dim=1) / (mask.sum(dim=1) - 1).float()
+
+        if self.use_crf:
+            arc_sample_nll = -arc_loss / (mask.sum(dim=1) - 1).float()
+        else:
+            arc_sample_nll = -arc_loss.sum(dim=1) / (mask.sum(dim=1) - 1).float()
+
         tag_sample_nll = -tag_loss.sum(dim=1) / (mask.sum(dim=1) - 1).float()
+
         per_sample_loss = arc_sample_nll + tag_sample_nll
         return arc_nll, tag_nll, per_sample_loss
 
