@@ -23,10 +23,10 @@ def crf_loss(energy, target_heads, mask=None):
     '''
     batch, length = target_heads.size()
     # [batch, length, length]
-    A = torch.exp(energy)
+    A = torch.exp(energy.double())
     # mask out invalid positions
     if mask is not None:
-        mask = mask.float()
+        mask = mask.double()
         A = A * mask.unsqueeze(2) * mask.unsqueeze(1)
 
     # set diagonal elements to 0
@@ -56,4 +56,4 @@ def crf_loss(energy, target_heads, mask=None):
     L = L[:, 1:, 1:]
     z = torch.logdet(L)
 
-    return z
+    return z.float()
