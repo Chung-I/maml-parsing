@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.nn.parameter import Parameter
 
-def crf_loss(energy, target_heads, mask=None):
+def crf_loss(energy, mask=None):
     '''
 
     Args:
@@ -21,7 +21,7 @@ def crf_loss(energy, target_heads, mask=None):
     Returns: Tensor
             A 1D tensor for minus log likelihood loss
     '''
-    batch, length = target_heads.size()
+    batch, length, _ = energy.size()
     # [batch, length, length]
     A = torch.exp(energy.double())
     # mask out invalid positions

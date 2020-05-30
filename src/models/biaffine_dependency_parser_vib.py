@@ -476,6 +476,12 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         normalized_arc_logits, normalized_pairwise_head_logits, lengths = self._attend_and_normalize(
             head_tag_representation, child_tag_representation, attended_arcs, mask)
 
+        z = crf_loss(normalized_arc_logits, mask)
+        z = z.unsqueeze(-1).expand(-1, -1, mask.size(1)) 
+        z = z / mask.float().sum(dim=1)
+        z = z * mask.float().unsqueeze(1) * mask.float().unsqueeze(2)
+        normalized_arc_logits = normalized_arc_logits - z
+
         return {"arc_log_probs": normalized_arc_logits,
                 "tag_log_probs": normalized_pairwise_head_logits,
                 "lengths": lengths,
@@ -826,7 +832,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             timestep_index.view(1, sequence_length).expand(batch_size, sequence_length).long()
         )
         if self.use_crf:
-            z = crf_loss(attended_arcs, head_indices, mask)
+            z = crf_loss(attended_arcs, mask)
             attended_arcs = attended_arcs * float_mask.unsqueeze(2) * float_mask.unsqueeze(1)
             arc_loss = attended_arcs[range_vector, child_index, head_indices]
             arc_loss = arc_loss[:, 1:].sum(dim=1) - z
