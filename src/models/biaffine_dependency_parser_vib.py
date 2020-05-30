@@ -395,6 +395,10 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         minus_inf = -1e8
         minus_mask = (1 - float_mask) * minus_inf
         attended_arcs = attended_arcs + minus_mask.unsqueeze(2) + minus_mask.unsqueeze(1)
+        seq_len = mask.size(1)
+        root_mask = torch.cat([mask.new_ones(batch_size, 1),
+                               mask.new_zeros(batch_size, seq_len - 1)], dim=1)
+        attended_arcs.masked_fill_(root_mask.bool().unsqueeze(2), minus_inf)
 
         if return_arc_representation:
             return head_arc_representation, child_arc_representation, \
@@ -438,7 +442,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         if not self.use_crf:
             normalized_arc_logits = F.log_softmax(attended_arcs, dim=2).transpose(1, 2)
         else:
-            normalized_arc_logits = attended_arcs
+            normalized_arc_logits = attended_arcs.transpose(1, 2) 
 
         return normalized_arc_logits, normalized_pairwise_head_logits, lengths
 
