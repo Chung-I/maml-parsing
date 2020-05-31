@@ -31,7 +31,7 @@ from allennlp.training.metrics import AttachmentScores, Average, CategoricalAccu
 
 from src.models.biaffine_dependency_parser import BiaffineDependencyParser
 from src.modules.vib import ContinuousVIB
-from src.modules.crf import crf_loss
+from src.modules.crf import log_partition
 from src.training.util import get_lang_means, get_lang_mean
 
 logger = logging.getLogger(__name__)
@@ -443,6 +443,12 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             normalized_arc_logits = F.log_softmax(attended_arcs, dim=2).transpose(1, 2)
         else:
             normalized_arc_logits = attended_arcs.transpose(1, 2) 
+            z = log_partition(attended_arcs, mask)
+            batch_size, seq_len = mask.size()
+            z = z.unsqueeze(-1).unsqueeze(-1).expand(-1, seq_len, seq_len)
+            z = z / (mask.float().sum(dim=1) - 1).view(batch_size, 1, 1)
+            z = z * mask.float().unsqueeze(1) * mask.float().unsqueeze(2)
+            normalized_arc_logits = normalized_arc_logits - z
 
         return normalized_arc_logits, normalized_pairwise_head_logits, lengths
 
@@ -475,12 +481,6 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             head_tags, head_indices = self._project(encoded_text, mask, head_tags, head_indices)
         normalized_arc_logits, normalized_pairwise_head_logits, lengths = self._attend_and_normalize(
             head_tag_representation, child_tag_representation, attended_arcs, mask)
-
-        z = crf_loss(normalized_arc_logits, mask)
-        z = z.unsqueeze(-1).expand(-1, -1, mask.size(1)) 
-        z = z / mask.float().sum(dim=1)
-        z = z * mask.float().unsqueeze(1) * mask.float().unsqueeze(2)
-        normalized_arc_logits = normalized_arc_logits - z
 
         return {"arc_log_probs": normalized_arc_logits,
                 "tag_log_probs": normalized_pairwise_head_logits,
@@ -832,7 +832,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             timestep_index.view(1, sequence_length).expand(batch_size, sequence_length).long()
         )
         if self.use_crf:
-            z = crf_loss(attended_arcs, mask)
+            z = log_partition(attended_arcs, mask)
             attended_arcs = attended_arcs * float_mask.unsqueeze(2) * float_mask.unsqueeze(1)
             arc_loss = attended_arcs[range_vector, child_index, head_indices]
             arc_loss = arc_loss[:, 1:].sum(dim=1) - z

@@ -406,6 +406,9 @@ class Trainer(TrainerBase):
                 description = training_util.description_from_metrics(metrics)
                 batch_group_generator_tqdm.set_description(description, refresh=False)
 
+            self._writer.log({"lr": self.optimizer.param_groups[0]['lr']},
+                             step=self._batch_num_total)
+
             # Save model if needed.
             if (
                 self._model_save_interval is not None
