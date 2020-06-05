@@ -5,6 +5,7 @@ import itertools
 import glob
 import os
 import numpy as np
+import re
 
 from overrides import overrides
 from conllu import parse_incr
@@ -55,6 +56,7 @@ def get_file_paths(pathname: str, languages: List[str]):
     A list of tuples (language id, file path).
     """
     paths = []
+    languages = [re.sub("[0-9]", "", l) for l in languages]
     lang = languages[0]
     delimiter = "-" if lang.split("_")[0] != lang else "_"
     for file_path in glob.glob(pathname):
@@ -64,7 +66,7 @@ def get_file_paths(pathname: str, languages: List[str]):
                 "Skipping %s language at %s since it has no text", lang, file_path
             )
             continue
-        lang_id = base.split(delimiter)[0]
+        lang_id = re.sub("[0-9]", "", base.split(delimiter)[0])
         if lang_id == base:
             lang_id = base.split("-")[0]
         if lang_id in languages:

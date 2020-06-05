@@ -26,4 +26,4 @@ if not out_dir.joinpath('config.json').exists():
     shutil.copy(Path(args.start).parent.joinpath('config.json'), out_dir.joinpath('config.json'))
 if not out_dir.joinpath('vocabulary').exists():
     shutil.copytree(Path(args.start).parent.joinpath('vocabulary'), out_dir.joinpath('vocabulary'))
-torch.save(interp_model, out_dir.joinpath(Path(args.start).name))
+torch.save(interp_model, out_dir.joinpath(Path(args.end).name))

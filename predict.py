@@ -40,8 +40,10 @@ import_submodules(args.include_package)
 archive_dir = Path(args.archive)
 
 config_file = archive_dir / "config.json"
-overrides = {"dataset_reader": {"read_dependencies": False},
-             "validation_dataset_reader": {"read_dependencies": False}}
+overrides = {"dataset_reader": {"read_dependencies": False,
+                                "max_len": 10000},
+             "validation_dataset_reader": {"read_dependencies": False,
+                                           "max_len": 10000,}}
 configs = [Params(overrides), Params.from_file(config_file)]
 
 params = util.merge_configs(configs)

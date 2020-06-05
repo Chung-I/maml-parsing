@@ -5,9 +5,10 @@
 // To recompute alignemts for ELMo, refer to: https://github.com/TalSchuster/CrossLingualELMo
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
-local MODEL_NAME = "xlm-roberta-base";
+local MODEL_NAME = "bert-base-multilingual-cased";
 local NUM_EPOCHS = std.parseInt(std.extVar("NUM_EPOCHS"));
 local BS = 8;
+local TOKEN_EMBEDDER_KEY = "bert";
 local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
     "languages": [x],
@@ -15,8 +16,9 @@ local BASE_READER(x, alternate=true) = {
     "instances_per_file": 32,
     "is_first_pass_for_vocab": false,
     "lazy": false,
+    "max_len": 256,
     "token_indexers": {
-        "roberta": {
+        [TOKEN_EMBEDDER_KEY]: {
             "type": "transformer_pretrained_mismatched",
             "model_name": MODEL_NAME,
             "max_length": MAX_LEN,
@@ -31,8 +33,10 @@ local LANG = std.extVar("FT_LANG");
 
 local READER(x, alternate=true) = BASE_READER(x, alternate);
 
+local CV = std.extVar("CV");
+
 local UD_ROOT = std.extVar("UD_ROOT");
-local DATA_PATH(lang, split) = UD_ROOT + lang + "**-" + split + ".conllu";
+local DATA_PATH(lang, split) = UD_ROOT + lang + CV + "**-" + split + ".conllu";
 
 {
     "dataset_reader": READER(LANG, false),
@@ -44,14 +48,14 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "**-" + split + ".conllu";
     "iterator": {
         "type": "bucket",
         "batch_size": BS,
-        "sorting_keys": [["words", "roberta___mask"]],
-        "maximum_samples_per_batch": ["roberta___mask", BS * MAX_LEN],
+        "sorting_keys": [["words", TOKEN_EMBEDDER_KEY + "___mask"]],
+        "maximum_samples_per_batch": [TOKEN_EMBEDDER_KEY + "___mask", BS * MAX_LEN],
     },
     "validation_iterator": {
         "type": "bucket",
         "batch_size": BS,
-        "sorting_keys": [["words", "roberta___mask"]],
-        "maximum_samples_per_batch": ["roberta___mask", BS * MAX_LEN],
+        "sorting_keys": [["words", TOKEN_EMBEDDER_KEY + "___mask"]],
+        "maximum_samples_per_batch": [TOKEN_EMBEDDER_KEY + "___mask", BS * MAX_LEN],
     },
     "model": {
       "type": "from_archive",
@@ -76,7 +80,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "**-" + split + ".conllu";
         },
         "patience": 10,
         "grad_norm": 5.0,
-        "ft_lang_mean_dir": "ckpts/" + LANG + "_mean",
+        "ft_lang_mean_dir": "ckpts/" + LANG + "_mean_fixed-bert",
         "validation_metric": "+LAS_AVG",
         "num_serialized_models_to_keep": 1,
         "num_gradient_accumulation_steps": 1,

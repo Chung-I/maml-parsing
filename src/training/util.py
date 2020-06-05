@@ -254,7 +254,7 @@ def get_lang_means(lang_mean_regex, vocab=None):
     ckpt_dirs = list(Path(".").glob(lang_mean_regex))
     lang_mean_list = [None] * vocab.get_vocab_size("lang_labels")
     for ckpt_dir in ckpt_dirs:
-        lang_name = re.match("(.*)_mean", ckpt_dir.name).group(1)
+        lang_name = re.match("(.*)_mean*", ckpt_dir.name).group(1)
         try:
             idx = vocab.get_token_index(lang_name, namespace="lang_labels")
         except KeyError:
@@ -278,7 +278,7 @@ def get_lang_means(lang_mean_regex, vocab=None):
 
 def get_lang_mean(lang_mean_dir):
     lang_mean_dir = Path(lang_mean_dir)
-    lang_name = re.match("(.*)_mean", lang_mean_dir.name).group(1)
+    lang_name = re.match("(.*)_mean*", lang_mean_dir.name).group(1)
     state_dict = torch.load(lang_mean_dir.joinpath("model_state_epoch_1.th"))
     return state_dict["mean"]
 
