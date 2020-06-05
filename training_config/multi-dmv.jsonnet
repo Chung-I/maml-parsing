@@ -6,6 +6,7 @@
 // For the dataset, refer to https://github.com/ryanmcd/uni-dep-tb
 local MAX_LEN = 512;
 local MODEL_NAME = "xlm-roberta-base";
+local INPUT_SIZE = 768;
 local NUM_EPOCHS = 10;
 local HIDDEN_SIZE = 128;
 local BIDIR = true;
@@ -28,6 +29,7 @@ local BASE_READER(x, alternate=true) = {
     },
     "use_language_specific_pos": false,
     "use_language_specific_deprel": false,
+    "max_len": 15,
 };
 
 local TRAIN_LANGS = ['af', 'grc', 'pt', 'sv', 'no', 'es', 'zh', 'fro', 'ja', 'tr', 'hi', 'ar', 'ca', 'hr', 'el', 'hu', 'la', 'fr', 'fi', 'eu', 'ko', 'et', 'id', 'fa', 'uk', 'got', 'pl', 'ug', 'vi', 'da', 'ru', 'gl', 'it', 'cu', 'cs', 'he', 'sr', 'en', 'sk', 'bg', 'sl', 'ur', 'nl', 'lv', 'de', 'ro'];
@@ -47,22 +49,30 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     },
     "iterator": {
         "type": "bucket",
-        "batch_size": 16,
+        "batch_size": 32,
         "sorting_keys": [["words", "roberta___mask"]],
-        "instances_per_epoch": 160000,
+        "instances_per_epoch": 32000,
     },
     "model": {
-        "type": "ldmv",
+        "type": "neuraldmv",
         "dmv": {
-            "cvalency_num": 2,
+            "cvalency_num": 1,
             "valency_num": 2,
         },
-        "valency_dim": 2,
-        "hid_dim": 100,
-        "pre_output_dim": 100,
-        "tag_dim": 100,
-        "lang_dim": 10,
-        "dir_dim": 5,
+        "nice_layer": {
+            "couple_layers": 4,
+            "cell_layers": 1,
+            "feat_dim": INPUT_SIZE,
+            "hidden_units": 64,
+        },
+        "encoder": {
+            "type": "lstm",
+            "hidden_size": 32,
+            "input_size": INPUT_SIZE,
+            "num_layers": 1,
+            "dropout": 0.0,
+            "bidirectional": true,
+        },
         "text_field_embedder": {
             "token_embedders": {
                 "roberta": {
@@ -76,6 +86,17 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
                 }
             }
         },
+        "hidden_dim": 32,
+        "state_dim": 32,
+        "n_states": 30,
+        "lang_mean_regex": "ckpts/*_mean",
+        "initializer": [
+            ["state_emb", {"type": "xavier_uniform"}],
+            ["r_mean", {"type": "xavier_uniform"}],
+            ["r_std", {"type": "uniform"}],
+            //[".*_mlp", {"type": "xavier_uniform"}],
+            //["stop_.*", {"type": "xavier_uniform"}],
+        ],
     },
     // UDTB v2.0 is available at https://github.com/ryanmcd/uni-dep-tb
     // Set TRAIN_PATHNAME='std/**/*train.conll'
@@ -90,6 +111,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
           "type": "adam",
           "lr": 3e-4,
         },
+        "grad_norm": 1.0,
         "patience": 10,
         "validation_metric": "+LAS_AVG",
         "save_embedder": false,

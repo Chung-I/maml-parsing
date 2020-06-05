@@ -311,7 +311,7 @@ class MetaTrainer(TrainerBase):
         self.optim_D = discriminator_optimizer
 
         self.has_VIB = hasattr(self.model, 'VIB') and self.model.VIB and self.model.VIB.beta > 0
-        self.has_pos = self.model._predict_pos
+        self.has_pos = hasattr(self.model, '_predict_pos') and self.model._predict_pos
 
         def update_hook(norms):
             assert log_grad_norm in ["none", 'total', 'var']
@@ -424,12 +424,12 @@ class MetaTrainer(TrainerBase):
             self.optimizer.zero_grad()
 
             task_metrics = self.wrapper(tasks=sampled_task_generators, train=True, meta_train=True)
-
             losses = [list(map(lambda x: x["loss"], metrics)) for metrics in task_metrics]
-            LASes = [list(map(lambda x: x["metric"]["LAS"], metrics)) for metrics in task_metrics]
+            LASes = [list(map(lambda x: x["metric"].get("LAS", 0.0), metrics)) for metrics in task_metrics]
+            UASes = [list(map(lambda x: x["metric"].get("UAS", 0.0), metrics)) for metrics in task_metrics]
 
-            names = ["loss", "LAS"]
-            list_values = [losses, LASes]
+            names = ["loss", "LAS", "UAS"]
+            list_values = [losses, LASes, UASes]
 
             if self.has_VIB:
                 KLDivs = [list(map(lambda x: x["metric"]["kl_div"], metrics)) for metrics in task_metrics]

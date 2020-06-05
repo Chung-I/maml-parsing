@@ -26,7 +26,7 @@ from allennlp.nn import util as nn_util
 
 logger = logging.getLogger(__name__)
 
-INF = 1e-10
+INF = 1e-20
 
 # We want to warn people that tqdm ignores metrics that start with underscores
 # exactly once. This variable keeps track of whether we have.
@@ -284,7 +284,7 @@ def get_lang_mean(lang_mean_dir):
     return state_dict["mean"]
 
 
-def get_dir_mask(sent_lens):
+def get_dir_mask(sent_lens, root=None):
     batch_size = len(sent_lens)
     max_sent_len = max(sent_lens)
     left_ids = torch.arange(max_sent_len).to(
@@ -293,7 +293,9 @@ def get_dir_mask(sent_lens):
         sent_lens.device).view(-1, 1).expand(-1, max_sent_len)
     left_mask = left_ids < right_ids
     right_mask = left_ids > right_ids
-    length_mask = nn_util.get_mask_from_sequence_lengths(sent_lens, max_sent_len)
+    length_mask = nn_util.get_mask_from_sequence_lengths(sent_lens, max_sent_len).bool()
+    if root is not None:
+        length_mask[:, root] = False
     mask = length_mask.unsqueeze(1) & length_mask.unsqueeze(2)
     left_mask = left_mask.unsqueeze(0).expand(batch_size, -1, -1) & mask
     right_mask = right_mask.unsqueeze(0).expand(batch_size, -1, -1) & mask

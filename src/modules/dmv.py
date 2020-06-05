@@ -14,11 +14,11 @@ class DMV(nn.Module, FromParams):
         self.valency_num = valency_num
         self.dir_num = dir_num
 
-    def _inside(self, batch_scores, batch_decision_score, batch_unary_score, sent_lens):
+    def _inside(self, left_score, right_score, batch_decision_score, batch_unary_score, sent_lens):
         valency_num = self.valency_num
         cvalency_num = self.cvalency_num
-        tensor = batch_scores
-        batch_size, sentence_length, _, tag_num, _, _ = batch_scores.shape
+        tensor = left_score
+        batch_size, sentence_length, tag_num, _ = left_score.shape
         inside_complete_table = tensor.new_full((batch_size,
                                                  sentence_length * sentence_length * 2,
                                                  tag_num, valency_num), -INF)
@@ -42,17 +42,17 @@ class DMV(nn.Module, FromParams):
             if dir == 0:
                 span_inside_i = inside_ik_ci[:, :, :, :, 0].reshape(batch_size, num_ki, tag_num, 1, 1) \
                                 + inside_kj_ci[:, :, :, :, 1].reshape(batch_size, num_ki, 1, tag_num, 1) \
-                                + batch_scores[:, r, l, :, :, :].transpose(2, 1).reshape(batch_size, 1, tag_num, tag_num,
-                                                                                        cvalency_num) \
+                                + right_score[:, r].reshape(batch_size, 1, tag_num, tag_num,
+                                                      cvalency_num) \
                                 + batch_decision_score[:, r, :, dir, :, 1].reshape(batch_size, 1, 1, tag_num, valency_num)
 
                 # swap head-child to left-right position
             else:
                 span_inside_i = inside_ik_ci[:, :, :, :, 1].reshape(batch_size, num_ki, tag_num, 1, 1) \
                                 + inside_kj_ci[:, :, :, :, 0].reshape(batch_size, num_ki, 1, tag_num, 1) \
-                                + batch_scores[:, l, r, :, :, :].reshape(batch_size, 1, tag_num, tag_num, cvalency_num) \
+                                + left_score[:, l].reshape(batch_size, 1, tag_num, tag_num, cvalency_num) \
                                 + batch_decision_score[:, l, :, dir, :, 1].reshape(batch_size, 1, tag_num, 1, valency_num)
-    
+
             inside_incomplete_table[:, ij, :, :, :] = torch.logsumexp(span_inside_i, dim=1)
 
             # one complete span and one incomplete span to form bigger complete span
@@ -80,11 +80,12 @@ class DMV(nn.Module, FromParams):
         #return inside_complete_table, inside_incomplete_table, partition_score
         return partition_score
 
-    def _viterbi(self, batch_scores, batch_decision_score, batch_unary_score, sent_lens):
+    def _viterbi(self, left_score, right_score, batch_decision_score, batch_unary_score, sent_lens):
         valency_num = self.valency_num
         cvalency_num = self.cvalency_num
-        tensor = batch_scores
-        batch_size, sentence_length, _, tag_num, _, _ = batch_scores.shape
+        tensor = left_score
+        batch_size, sentence_length, tag_num, _ = left_score.shape
+
         # CYK table
         complete_table = tensor.new_full((batch_size,
                                           sentence_length * sentence_length * 2,
@@ -116,13 +117,13 @@ class DMV(nn.Module, FromParams):
             if dir == 0:
                 span_i = ik_ci[:, :, :, :, 0].reshape(batch_size, num_ki, tag_num, 1, 1) \
                          + kj_ci[:, :, :, :, 1].reshape(batch_size, num_ki, 1, tag_num, 1) + \
-                         batch_scores[:, r, l, :, :, :].transpose(1, 2).reshape(batch_size, 1, tag_num, tag_num,
+                         right_score[:, r].transpose(1, 2).reshape(batch_size, 1, tag_num, tag_num,
                                                                                 cvalency_num) \
                          + batch_decision_score[:, r, :, dir, :, 1].reshape(batch_size, 1, 1, tag_num, valency_num)
             else:
                 span_i = ik_ci[:, :, :, :, 1].reshape(batch_size, num_ki, tag_num, 1, 1) \
                          + kj_ci[:, :, :, :, 0].reshape(batch_size, num_ki, 1, tag_num, 1) + \
-                         batch_scores[:, l, r, :, :, :].reshape(batch_size, 1, tag_num, tag_num, cvalency_num) \
+                         left_score[:, l].reshape(batch_size, 1, tag_num, tag_num, cvalency_num) \
                          + batch_decision_score[:, l, :, dir, :, 1].reshape(batch_size, 1, tag_num, 1, valency_num)
 
             incomplete_table[:, ij, :, :, :], incomplete_backtrack[:, ij, :, :, :] \

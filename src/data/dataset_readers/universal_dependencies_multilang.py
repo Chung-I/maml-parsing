@@ -116,6 +116,7 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         use_language_specific_deprel: bool = True,
         deprel_file: str = None,
         in_memory: bool = False,
+        max_len: int = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -141,6 +142,7 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
         self._deprels = None
         self._in_memory = in_memory
         self._file_cache = None
+        self._max_len = max_len
         if self._in_memory:
             self._file_cache = {}
         if deprel_file is not None:
@@ -187,6 +189,9 @@ class UniversalDependenciesMultiLangDatasetReader(DatasetReader):
             # and are replaced with None by the conllu python library.
             multiword_tokens = [x for x in annotation if x["multi_id"] is not None]
             annotation = [x for x in annotation if x["id"] is not None]
+            if self._max_len is not None:
+                if len(annotation) > self._max_len:
+                    continue
     
             if len(annotation) == 0:
                 continue
