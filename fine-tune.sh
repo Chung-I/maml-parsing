@@ -4,7 +4,7 @@ if [ ! -f $ARCHIVE_PATH ];
 then
   python3 utils/make_archive.py -s ckpts/$1 -n $2 -m training_config/model.json || exit 1;
 fi
-if grep $3 data/ensemble_langs.txt;
+if grep -w $3 data/ensemble_langs.txt;
 then
   for file in $UD_ROOT${3}_*-*-*-train.conllu;
   do
@@ -16,7 +16,7 @@ then
 else
   CV="" NUM_EPOCHS=$4 FT_LANG=$3 RUN_NAME=$1_$2_$3_$5 python -W ignore run.py train training_config/fine-tune.jsonnet --include-package src -s ckpts/$1_$2_$3_$5
 fi
-if grep $3 data/ensemble_langs.txt;
+if grep -w $3 data/ensemble_langs.txt;
 then
   for file in $UD_ROOT${3}_*-*-*-train.conllu;
   do

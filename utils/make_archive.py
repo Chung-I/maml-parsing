@@ -90,7 +90,10 @@ else:
     weights = "best.th"
     archive_path = os.path.join(args.s, f"model.tar.gz")
 
-weights, is_tmp_weight = maybe_add_pretrained_embeddings(args.s, weights, args.n)
+if os.environ.get("BASE_MODEL") is None:
+    is_tmp_weight = False
+else:
+    weights, is_tmp_weight = maybe_add_pretrained_embeddings(args.s, weights, args.n)
 
 config_fname =os.path.join(args.s, CONFIG_NAME)
 old_config_fname =os.path.join(args.s, OLD_CONFIG_NAME)

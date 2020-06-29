@@ -53,7 +53,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     "iterator": {
         "type": "bucket",
         "batch_size": 16,
-	"sorting_keys": [["words", TOKEN_EMBEDDER_KEY + "___mask"]],
+        "sorting_keys": [["words", TOKEN_EMBEDDER_KEY + "___mask"]],
         "instances_per_epoch": 64000,
     },
     "model": {

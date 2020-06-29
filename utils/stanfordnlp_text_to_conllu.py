@@ -3,7 +3,7 @@ import argparse
 import os
 from pathlib import Path
 from collections import defaultdict
-import itertools
+from itertools import chain
 import json
 import shutil
 import numpy as np
@@ -36,6 +36,7 @@ parser.add_argument('--ud-root')
 parser.add_argument('--model-dir')
 parser.add_argument('--out-dir')
 parser.add_argument('--split', choices=["traindev", "test"])
+parser.add_argument('--num-splits', default=3)
 parser.add_argument('--case', choices=["preprocess", "benchmark"])
 parser.add_argument('--overwrite', action='store_true')
 args = parser.parse_args()
@@ -58,7 +59,9 @@ def prep_conllu(tb, file_path, overwrite):
     out_file = out_dir.joinpath(file_path.name)
     if out_file.exists() and not overwrite:
         print(f"{out_file.name} exists; skipping")
-        return None
+        doc = stanfordnlp.Document('')
+        doc.conll_file = CoNLLFile(out_file)
+        return doc
     lang, tb, tb_kwargs = determine_treebank(tb)
     if not lang:
         shutil.copy(file_path, out_file)
@@ -93,31 +96,32 @@ if args.split == "traindev":
         file_path = conll_glob[0]
         doc = prep_conllu(tb, file_path, args.overwrite)
         if doc is not None:
-            if has_dev:
+            if has_dev: # if dev has been written -> write train
                 out_file = out_dir.joinpath(file_path.name)
                 doc.write_conll_to_file(str(out_file))
             else:
-                out_train_file = out_dir.joinpath(file_path.name)
-                dev_name = file_path.name.split("-")[0] + "-ud-dev.conllu"
-                out_dev_file = out_dir.joinpath(dev_name)
-                out_dev_file.touch()
-
-                train_conll = CoNLLFile(str(out_train_file))
-                dev_conll = CoNLLFile(str(out_dev_file))
-
                 sents = doc.conll_file.sents
                 permutations = np.random.permutation(np.arange(len(sents))).tolist()
-                divide = len(sents) * 7 // 8
-                train_sents = [sents[idx] for idx in permutations[:divide]]
-                dev_sents = [sents[idx] for idx in permutations[divide:]]
+                divides = [int(n * len(sents) * (1 / args.num_splits)) for n in range(args.num_splits + 1)]
+                for file_num, (start, end) in enumerate(zip(divides[:-1], divides[1:])):
+                    train_sents = [sents[idx] for idx in chain(permutations[:start],permutations[end:])]
+                    dev_sents = [sents[idx] for idx in permutations[start:end]]
 
-                train_conll._sents = train_sents
-                dev_conll._sents = dev_sents
+                    train_name = file_path.name.split("-")[0] + f"-{file_num}-ud-train.conllu"
+                    out_train_file = out_dir.joinpath(train_name)
+                    out_train_file.touch()
+                    dev_name = file_path.name.split("-")[0] + f"-{file_num}-ud-dev.conllu"
+                    out_dev_file = out_dir.joinpath(dev_name)
+                    out_dev_file.touch()
 
-                train_conll.write_conll(out_train_file)
-                dev_conll.write_conll(out_dev_file)
-            
-        
+                    train_conll = CoNLLFile(str(out_train_file))
+                    dev_conll = CoNLLFile(str(out_dev_file))
+
+                    train_conll._sents = train_sents
+                    dev_conll._sents = dev_sents
+
+                    train_conll.write_conll(out_train_file)
+                    dev_conll.write_conll(out_dev_file)
 
 elif args.split == "test":
     kwargs = {}
