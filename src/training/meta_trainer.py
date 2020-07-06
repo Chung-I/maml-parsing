@@ -431,9 +431,21 @@ class MetaTrainer(TrainerBase):
             list_values = [losses, LASes]
 
             if self.has_VIB:
-                KLDivs = [list(map(lambda x: x["metric"]["kl_div"], metrics)) for metrics in task_metrics]
-                names.append("KLDiv")
-                list_values.append(KLDivs)
+                for key in ["kl_div", "diversity", "certainty"]:
+                    values = [list(map(lambda x: x["metric"][key], metrics)) for metrics in task_metrics]
+                    name = key
+                    if key == "kl_div":
+                        name = "KLDiv"
+                    names.append(name)
+                    list_values.append(values)
+                disc_ts = [list(map(lambda x: x["metric"]["disc_t"], metrics)) for metrics in task_metrics]
+                self._writer.log_categorical(
+                    {f"step_disct_{task}_{i}": value
+                        for task, task_values in zip(sampled_tasks, disc_ts)
+                        for i, value in enumerate(task_values)
+                    },
+                    step=self._batch_num_total
+                )
 
             if self.has_pos:
                 pos_accs = [list(map(lambda x: x["metric"].get("pos_accuracy", 0.0), metrics)) for metrics in task_metrics]
@@ -464,12 +476,25 @@ class MetaTrainer(TrainerBase):
 
             # variational information bottleneck / meta-learning without memorization
             if self.has_VIB:
-                kl_loss, kl_div, kl_div2 = ContinuousVIB.get_kl_loss(self.model, sampled_task_generators)
+                kl_loss, kl_div, kl_div2, diversity, certainty, disc_t = \
+                    self.model.VIB.get_kl_loss(self.model, sampled_task_generators)
                 kl_loss.backward()
-                self._writer.log({"kl_loss": kl_loss.detach().item(),
-                                  "kl_div": kl_div,
-                                  "kl_div2": kl_div2},
-                                  step=self._batch_num_total)
+                vib_dict = {
+                    "kl_loss": kl_loss.detach().item(),
+                    "kl_div": kl_div,
+                    "kl_div2": kl_div2,
+                }
+                if diversity is not None:
+                    vib_dict["diversity"] = diversity
+                if certainty is not None:
+                    vib_dict["certainty"] = certainty
+                self._writer.log(vib_dict,
+                                 step=self._batch_num_total)
+                self._writer.log_categorical({
+                    "disc_t": disc_t,
+                },
+                step=self._batch_num_total
+                )
 
             # adversarial training
             if self.task_D and self.optim_D:

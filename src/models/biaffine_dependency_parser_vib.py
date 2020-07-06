@@ -30,7 +30,7 @@ from allennlp.nn.chu_liu_edmonds import decode_mst
 from allennlp.training.metrics import AttachmentScores, Average, CategoricalAccuracy
 
 from src.models.biaffine_dependency_parser import BiaffineDependencyParser
-from src.modules.vib import ContinuousVIB
+from src.modules.vib import ContinuousVIB, DiscreteVIB
 from src.modules.crf import log_partition
 from src.training.util import get_lang_means, get_lang_mean
 
@@ -140,7 +140,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             from src.data.token_indexers import PretrainedAutoTokenizer
             self._tokenizer = PretrainedAutoTokenizer.load(model_name)
 
-        encoder_dim = tag_dim
+        encoder_dim = self.encoder.get_output_dim()
 
         self.head_arc_feedforward = arc_feedforward or FeedForward(
             encoder_dim, 1, arc_representation_dim, Activation.by_name("elu")()
@@ -171,7 +171,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         assert dropout_location in ['input', 'lm']
         self._dropout_location = dropout_location
 
-        self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, tag_dim]))
+        self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, encoder_dim]))
 
         representation_dim = text_field_embedder.get_output_dim()
         if pos_tag_embedding is not None:
@@ -210,6 +210,13 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         )
 
         self._lang_kl_divs: Dict[str, Average] = defaultdict(Average)
+        self._lang_diversities: Dict[str, Average] = defaultdict(Average)
+        self._lang_certainties: Dict[str, Average] = defaultdict(Average)
+        self._lang_disc_ts: Dict[str, Average] = defaultdict(Average)
+        self._lang_vib_avgs = {"kl_div": self._lang_kl_divs,
+                               "disc_t": self._lang_disc_ts,
+                               "diversity": self._lang_diversities,
+                               "certainty": self._lang_certainties}
         self._lang_attachment_scores: Dict[str, AttachmentScores] = defaultdict(AttachmentScores)
 
         self._langs_for_early_stop = langs_for_early_stop or []
@@ -263,10 +270,18 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         self.VIB = None
         if vib is not None:
-            self.VIB = ContinuousVIB.from_params(
-                Params(vib),
-                embedding_dim=representation_dim,
-            )
+            vib = Params(vib)
+            vib_type = vib.pop("type", "cont")
+            if vib_type == "cont":
+                self.VIB = ContinuousVIB.from_params(
+                    vib,
+                    embedding_dim=representation_dim,
+                )
+            elif vib_type == "disc":
+                self.VIB = DiscreteVIB.from_params(
+                    vib,
+                    embedding_dim=representation_dim,
+                )
 
         self.use_crf = use_crf
         
@@ -341,14 +356,15 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         else:
             bsz = embedded_text_input.size(0)
             r_mean = self.r_mean.unsqueeze(0).repeat(bsz, 1, 1)
-            r_std = self.r_std.unsqueeze(0).repeat(bsz, 1, 1) 
+            r_std = self.r_std.unsqueeze(0).repeat(bsz, 1, 1)
 
-        embedded_text_input, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = self.VIB(
+        embedded_text_input, head_indices, head_tags, pos_tags, mask, kl_loss, vib_dict = \
+        self.VIB(
             head_indices, head_tags, pos_tags, mask, r_mean, r_std, sample_size=sample_size,
             sample_method=sample_method, type_embeds=embedded_text_input,
         )
         return embedded_text_input, head_indices, head_tags, pos_tags, mask, \
-            kl_loss, kl_div, kl_div2
+            kl_loss, vib_dict
 
     def _gen_typo_feats(self,
                         embedded_text_input: torch.Tensor,
@@ -463,7 +479,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         variational: bool = False,
     ):
         if self.VIB is not None: 
-            bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
+            bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, vib_dict = \
                 self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
                                  head_indices, langs, variational)
             embedded_text = bottlenecked_text
@@ -528,12 +544,17 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         kl_loss = None
         pos_loss = None
         if self.VIB is not None: 
-            bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, kl_div, kl_div2 = \
+            bottlenecked_text, head_indices, head_tags, pos_tags, mask, kl_loss, vib_dict = \
                 self._bottleneck(embedded_text_input, pos_tags, mask, head_tags,
                                  head_indices, langs, variational)
             embedded_text = bottlenecked_text
-            kl_div_score = self._lang_kl_divs[batch_lang]
-            kl_div_score(kl_div)
+
+            for key, avg_metric_dict in self._lang_vib_avgs.items():
+                avg_metric_obj = avg_metric_dict[batch_lang]
+                vib_value = vib_dict[key]
+                if vib_value is not None:
+                    avg_metric_obj(vib_value)
+
             if loss_ratios["pos"] > 0.0:
                 logits = self.tag_projection_layer(bottlenecked_text)
                 pos_loss = sequence_cross_entropy_with_logits(logits, pos_tags, mask)
@@ -556,7 +577,10 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             encoded_text = self.encoder(embedded_text, mask)
 
         if variational:
-            return {"kl_loss": kl_loss, "kl_div": kl_div, "kl_div2": kl_div2}
+            return {
+                "kl_loss": kl_loss,
+                **vib_dict,
+            }
 
         head_arc_representation, child_arc_representation, \
         head_tag_representation, child_tag_representation, attended_arcs, mask, \
@@ -588,8 +612,11 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             if return_metric:
                 metric.update(scores.get_metric(reset=True))
                 if self.VIB:
-                    kl_div_metric = kl_div_score.get_metric(reset=True)
-                    metric.update({"kl_div": kl_div_metric})
+                    for key, avg_metric_dict in self._lang_vib_avgs.items():
+                        avg_metric_obj = avg_metric_dict[batch_lang]
+                        vib_value = avg_metric_obj.get_metric(reset=True)
+                        metric.update({key: vib_value})
+
 
         output_dict = {}
         if self._inspect_layer == "embedding":

@@ -1,6 +1,7 @@
 from typing import Any, Set, Optional, Callable
 import logging
 import os
+import matplotlib.pyplot as plt
 
 from tensorboardX import SummaryWriter
 import torch
@@ -65,6 +66,16 @@ class TensorboardWriter(FromParams):
         for metric, value in metrics.items():
             name = f"{prefix}_{metric}" if prefix else metric
             add_scalar_func(name, value, timestep=timestep)
+
+    def log_categorical(self, metrics, step, epoch=None, prefix=""):
+        if step % self._summary_interval == 0:
+            timestep = step if epoch is None else epoch
+            log_obj = self._train_log if prefix != "val" else self._validation_log
+            for metric, value in metrics.items():
+                fig = plt.figure()
+                xs = list(range(len(value)))
+                plt.bar(xs, value)
+                log_obj.add_figure(f"{prefix}_{metric}"  if prefix else metric, fig, timestep)
 
     def should_log_this_batch(self) -> bool:
         return self._get_batch_num_total() % self._summary_interval == 0
