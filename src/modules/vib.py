@@ -116,7 +116,7 @@ class DiscreteEncoder(nn.Module):
     def get_sample_from_param_batch(self, alpha, sample_size):
 
         if self.training:
-            bsz, seqlen, tag_dim = alpha.shape 
+            bsz, seqlen, tag_dim = alpha.shape
             unif = torch.rand(bsz, sample_size, seqlen, tag_dim).to(alpha.device)
             gumbel = -torch.log(-torch.log(unif + EPS) + EPS)
 

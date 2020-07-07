@@ -16,6 +16,7 @@ from allennlp.nn.util import batched_index_select
 from src.data.token_indexers import PretrainedAutoTokenizer
 from src.modules.scalar_mix import ScalarMixWithDropout
 
+from src.training.util import get_means, zero_centering
 
 class PretrainedAutoModel:
     """
@@ -81,7 +82,8 @@ class TransformerEmbedder(TokenEmbedder):
                  dropout: float = 0.0,
                  combine_layers: str = "mix",
                  adapter_size: int = 8,
-                 pretrained: bool = True) -> None:
+                 pretrained: bool = True,
+                 mean_affix: str = None) -> None:
         super().__init__()
         placeholder = model_name.split("_")
         tokenizer_name = placeholder[-1]
@@ -93,10 +95,12 @@ class TransformerEmbedder(TokenEmbedder):
         # where it doesn't work.
         self.output_dim = self.transformer_model.config.hidden_size
         self.combine_layers = combine_layers
+        self.mean_affix = mean_affix
 
         if self.combine_layers == "mix":
+            num_layers = self.transformer_model.config.num_hidden_layers + 1
             self._scalar_mix = ScalarMixWithDropout(
-                self.transformer_model.config.num_hidden_layers,
+                num_layers,
                 do_layer_norm=False,
                 dropout=layer_dropout
             )
@@ -124,6 +128,7 @@ class TransformerEmbedder(TokenEmbedder):
         mask: torch.LongTensor,
         type_ids: Optional[torch.LongTensor] = None,
         segment_concat_mask: Optional[torch.LongTensor] = None,
+        lang: Optional[str] = None,
     ) -> torch.Tensor:  # type: ignore
         """
         # Parameters
@@ -172,14 +177,26 @@ class TransformerEmbedder(TokenEmbedder):
         # [batch_size * num_segments, self._max_length, embedding_size]
         layer_outputs = self.transformer_model(
             input_ids=token_ids, token_type_ids=type_ids, attention_mask=transformer_mask
-        )[-1][1:]
+        )[-1]
+
+        if self.mean_affix is not None:
+            means = get_means(len(layer_outputs), self.mean_affix, lang)
+            layer_outputs = zero_centering(layer_outputs, means)
+
         layer_outputs = [self._bert_dropout(layer_output) for layer_output in layer_outputs]
+
         if self._scalar_mix is not None:
-            embeddings = self._scalar_mix(layer_outputs, transformer_mask)
+                embeddings = self._scalar_mix(layer_outputs, transformer_mask)
         elif self.combine_layers == "last":
             embeddings = layer_outputs[-1]
+        elif self.combine_layers == "all":
+            return layer_outputs
         else:
-            raise NotImplementedError
+            try:
+                layer_num = int(self.combine_layers)
+                embeddings = layer_outputs[layer_num]
+            except ValueError:
+                raise NotImplementedError
 
         if too_long:
             embeddings = self._unfold_long_sequences(
@@ -383,6 +400,7 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
         combine_layers: str = "mix",
         adapter_size: int = 8,
         pretrained: bool = True,
+        mean_affix: str = None,
     ) -> None:
 
         super().__init__(
@@ -394,6 +412,7 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
             combine_layers=combine_layers,
             adapter_size=adapter_size,
             pretrained=pretrained,
+            mean_affix=mean_affix,
         )
         for name, param in self.transformer_model.named_parameters():
             if model_name.startswith("adapter") and 'adapter' in name:

@@ -38,7 +38,8 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
         combine_layers: str = "mix",
         adapter_size: int = 8,
         pretrained: bool = True,
-        ) -> None:
+        mean_affix: str = None,
+    ) -> None:
         super().__init__()
         # The matched version v.s. mismatched
         self._matched_embedder = PretrainedTransformerEmbedder(
@@ -51,6 +52,7 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
             combine_layers=combine_layers,
             adapter_size=adapter_size,
             pretrained=pretrained,
+            mean_affix=mean_affix,
         )
 
     @overrides
@@ -66,6 +68,7 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
         wordpiece_mask: torch.LongTensor,
         type_ids: Optional[torch.LongTensor] = None,
         segment_concat_mask: Optional[torch.LongTensor] = None,
+        lang: Optional[str] = None,
     ) -> torch.Tensor:  # type: ignore
         """
         # Parameters
@@ -92,7 +95,7 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
         """
         # Shape: [batch_size, num_wordpieces, embedding_size].
         embeddings = self._matched_embedder(
-            token_ids, wordpiece_mask, type_ids=type_ids, segment_concat_mask=segment_concat_mask
+            token_ids, wordpiece_mask, type_ids=type_ids, segment_concat_mask=segment_concat_mask, lang=lang,
         )
 
         # span_embeddings: (batch_size, num_orig_tokens, max_span_length, embedding_size)

@@ -282,3 +282,13 @@ def get_lang_mean(lang_mean_dir):
     state_dict = torch.load(lang_mean_dir.joinpath("model_state_epoch_1.th"))
     return state_dict["mean"]
 
+def get_mean(lang_mean_dir):
+    state_dict = torch.load(os.path.join(lang_mean_dir, "model_state_epoch_1.th"))
+    return state_dict["mean"]
+
+def get_means(num_layers, lang_mean_affix, lang):
+    means = list(map(get_mean, map(lambda layer: f"ckpts/{lang}-{lang_mean_affix}-layer-{layer}", range(num_layers))))
+    return means
+
+def zero_centering(embeddings, means):
+    return [embedding - mean for embedding, mean in zip(embeddings, means)]

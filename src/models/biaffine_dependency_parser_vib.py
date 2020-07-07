@@ -539,7 +539,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         metric = {}
 
         mask = get_text_field_mask(words)
-        embedded_text_input = self._embed(words, pos_tags, mask, metadata, lemmas, feats, langs)
+        embedded_text_input = self._embed(words, pos_tags, mask, metadata, lemmas, feats, langs, batch_lang)
 
         kl_loss = None
         pos_loss = None
