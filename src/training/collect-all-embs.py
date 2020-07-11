@@ -309,13 +309,13 @@ class Trainer(TrainerBase):
         output_dict = self._pytorch_model(**batch)
         mean = output_dict.pop("mean")
         num_tokens = output_dict.pop("num_tokens")
-        self._means["mean"].append(mean)
-        self._num_tokens["num_tokens"].append(num_tokens)
-        tags = [re.match("(.*)_mean", key).group(1) for key, value in output_dict.items()]
-        tags = list(filter(lambda t: t is not None, tags))
+        self._means["overall"].append(mean)
+        self._num_tokens["overall"].append(num_tokens)
+        matches = [re.match("(.*)_mean", key) for key, value in output_dict.items()]
+        tags = [match.group(1) for match in matches if match is not None]
         for tag in tags:
-            self._means[f"{tag}_mean"].append(output_dict[f"{tag}_mean"])
-            self._num_tokens[f"{tag}_num_tokens"].append(output_dict[f"{tag}_num_tokens"])
+            self._means[tag].append(output_dict[f"{tag}_mean"])
+            self._num_tokens[tag].append(output_dict[f"{tag}_num_tokens"])
 
         return output_dict
 
@@ -378,10 +378,21 @@ class Trainer(TrainerBase):
         if self._distributed:
             dist.barrier()
 
-        total_val = torch.stack([mean * num_tokens \
-            for mean, num_tokens in zip(self._means, self._num_tokens)], dim=0).sum(dim=0)
-        total_num_tokens = sum(self._num_tokens)
-        self.overall_mean = total_val / total_num_tokens
+        for tag in self._means:
+            means = self._means[tag]
+            num_tokens = self._num_tokens[tag]
+            # total_val = torch.stack([mean * num_token \
+            #     for mean, num_token in zip(means, num_tokens)], dim=0).sum(dim=0)
+            total_val = sum([mean * num_token for mean, num_token in zip(means, num_tokens)])
+            total_num_tokens = sum(num_tokens)
+            self.overall_mean[f"{tag}_mean"] = total_val / total_num_tokens
+
+        means = self._means["overall"]
+        num_tokens = self._num_tokens["overall"]
+        total_val = torch.stack([mean * num_token \
+            for mean, num_token in zip(means, num_tokens)], dim=0).sum(dim=0)
+        total_num_tokens = sum(num_tokens)
+        self.overall_mean["mean"] = total_val / total_num_tokens
 
     def _validation_loss(self) -> Tuple[float, int]:
         """
@@ -502,7 +513,7 @@ class Trainer(TrainerBase):
         }
 
         self._checkpointer.save_checkpoint(
-            model_state={"mean": self.overall_mean},
+            model_state=self.overall_mean,
             epoch=epoch,
             training_states={},
             is_best_so_far=self._metric_tracker.is_best_so_far(),

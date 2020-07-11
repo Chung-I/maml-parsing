@@ -275,8 +275,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             pos_mask = (pos_tags == index) & mask.bool()
             if pos_mask.long().sum() == 0:
                 continue
-            pos_mean = masked_mean(embedded_text_input, pos_mask.unsqueeze(-1), dim=(0,1))
-            output_dict[f"{tag}_mean"]
+            pos_mean = masked_mean(embedded_text_input, pos_mask.float().unsqueeze(-1), dim=(0,1))
+            output_dict[f"{tag}_mean"] = pos_mean
             output_dict[f"{tag}_num_tokens"] = pos_mask.long().sum().item()
 
         return output_dict
