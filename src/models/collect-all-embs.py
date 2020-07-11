@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 POS_TO_IGNORE = {"`", "''", ":", ",", ".", "PU", "PUNCT", "SYM"}
 
 
-@Model.register("collect-emb")
+@Model.register("collect-all-embs")
 class BiaffineDependencyParserMultiLangVIB(Model):
     """
     This dependency parser implements the multi-lingual extension
