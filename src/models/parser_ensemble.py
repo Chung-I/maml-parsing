@@ -45,9 +45,10 @@ class ParserEnsemble(Ensemble):
         The forward method runs each of the submodels, then selects the best from the subresults.
         """
 
+        batch_lang = metadata[0]["lang"]
         mask = get_text_field_mask(words)
         embedded_text_input = self.submodels[0]._embed(
-            words, pos_tags, mask, metadata, lemmas, feats, langs
+            words, pos_tags, mask, metadata, lemmas, feats, langs, batch_lang
         )
         subresults = [
             submodel.get_arc_factored_probs(
