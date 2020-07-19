@@ -83,6 +83,7 @@ class TransformerEmbedder(TokenEmbedder):
                  combine_layers: str = "mix",
                  adapter_size: int = 8,
                  pretrained: bool = True,
+                 lang_file: str = None,
                  mean_affix: str = None) -> None:
         super().__init__()
         placeholder = model_name.split("_")
@@ -106,6 +107,17 @@ class TransformerEmbedder(TokenEmbedder):
             )
         else:
             self._scalar_mix = None
+
+        if lang_file is not None:
+            with open(lang_file) as fp:
+                langs = fp.read().splitlines()
+            num_layers = self.transformer_model.config.num_hidden_layers + 1
+            self.lang2id = {lang: idx for idx, lang in enumerate(langs)}
+            lang_learned_means = torch.zeros(len(langs), num_layers, self.output_dim)
+        self.lang_learned_means = torch.nn.Parameter(lang_learned_means)
+
+        ft_learned_means = torch.zeros(num_layers, self.output_dim)
+        self.ft_learned_means = torch.nn.Parameter(ft_learned_means)
 
         self._bert_dropout = InputVariationalDropout(bert_dropout)
         self.set_dropout(dropout)
@@ -182,6 +194,13 @@ class TransformerEmbedder(TokenEmbedder):
         if self.mean_affix is not None:
             means = get_means(len(layer_outputs), self.mean_affix, lang)
             layer_outputs = zero_centering(layer_outputs, means)
+        if self.lang_learned_means is not None:
+            lang_idx = self.lang2id.get(lang)
+            if lang_idx is None:
+                learned_means = self.ft_learned_means
+            else:
+                learned_means = self.lang_learned_means[lang_idx]
+            layer_outputs = zero_centering(layer_outputs, -learned_means)
 
         layer_outputs = [self._bert_dropout(layer_output) for layer_output in layer_outputs]
 
@@ -400,6 +419,7 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
         combine_layers: str = "mix",
         adapter_size: int = 8,
         pretrained: bool = True,
+        lang_file: str = None,
         mean_affix: str = None,
     ) -> None:
 
@@ -412,6 +432,7 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
             combine_layers=combine_layers,
             adapter_size=adapter_size,
             pretrained=pretrained,
+            lang_file=lang_file,
             mean_affix=mean_affix,
         )
         for name, param in self.transformer_model.named_parameters():

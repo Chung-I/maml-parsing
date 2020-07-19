@@ -49,13 +49,13 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + CV + "**-" + split + ".conllu";
         "type": "bucket",
         "batch_size": BS,
         "sorting_keys": [["words", TOKEN_EMBEDDER_KEY + "___mask"]],
-        "maximum_samples_per_batch": [TOKEN_EMBEDDER_KEY + "___mask", BS * MAX_LEN],
+        // "maximum_samples_per_batch": [TOKEN_EMBEDDER_KEY + "___mask", BS * MAX_LEN],
     },
     "validation_iterator": {
         "type": "bucket",
         "batch_size": BS,
         "sorting_keys": [["words", TOKEN_EMBEDDER_KEY + "___mask"]],
-        "maximum_samples_per_batch": [TOKEN_EMBEDDER_KEY + "___mask", BS * MAX_LEN],
+        // "maximum_samples_per_batch": [TOKEN_EMBEDDER_KEY + "___mask", BS * MAX_LEN],
     },
     "model": {
       "type": "from_archive",

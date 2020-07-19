@@ -38,6 +38,7 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
         combine_layers: str = "mix",
         adapter_size: int = 8,
         pretrained: bool = True,
+        lang_file: str = None,
         mean_affix: str = None,
     ) -> None:
         super().__init__()
@@ -52,6 +53,7 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
             combine_layers=combine_layers,
             adapter_size=adapter_size,
             pretrained=pretrained,
+            lang_file=lang_file,
             mean_affix=mean_affix,
         )
 

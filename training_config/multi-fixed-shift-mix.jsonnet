@@ -99,7 +99,8 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
                     "bert_dropout": 0.5,
                     "dropout": 0.0,
                     "combine_layers": "mix",
-                    // "mean_affix": "all-mean-fixed-bert"
+                    "mean_affix": "all-mean-fixed-bert",
+                    "lang_file": "data/vocabulary/lang_labels.txt"
                 }
             }
         },
@@ -132,7 +133,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         },
         "patience": 10,
         "validation_metric": "+LAS_AVG",
-        "save_embedder": false,
+        "save_embedder": true,
         "num_serialized_models_to_keep": -1,
         "num_gradient_accumulation_steps": 1,
         "tasks_per_step": 10,
