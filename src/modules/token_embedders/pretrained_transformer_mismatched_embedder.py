@@ -40,6 +40,7 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
         pretrained: bool = True,
         lang_file: str = None,
         mean_affix: str = None,
+        lang_norm: bool = False,
     ) -> None:
         super().__init__()
         # The matched version v.s. mismatched
@@ -55,6 +56,7 @@ class PretrainedTransformerMismatchedEmbedder(TokenEmbedder):
             pretrained=pretrained,
             lang_file=lang_file,
             mean_affix=mean_affix,
+            lang_norm=lang_norm,
         )
 
     @overrides
