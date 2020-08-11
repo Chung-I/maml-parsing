@@ -100,7 +100,7 @@ class TransformerEmbedder(TokenEmbedder):
         self.mean_affix = mean_affix
 
         if self.combine_layers == "mix":
-            num_layers = self.transformer_model.config.num_hidden_layers + 1
+            num_layers = self.transformer_model.config.num_hidden_layers
             self._scalar_mix = ScalarMixWithDropout(
                 num_layers,
                 do_layer_norm=False,
@@ -119,12 +119,12 @@ class TransformerEmbedder(TokenEmbedder):
             self.lang2id = {lang: idx for idx, lang in enumerate(langs)}
             num_layers = self.transformer_model.config.num_hidden_layers
             if lang_norm:
-                self.lang_norms = {}
-                self.ft_lang_norm = {}
-                for lang in langs:
-                    for layer in range(num_layers):
-                        self.lang_norms[(lang, layer)] = torch.nn.BatchNorm1d(self.output_dim)
-                    self.ft_lang_norm[layer] = torch.nn.BatchNorm1d(self.output_dim)
+                self.lang_norms = torch.nn.ModuleDict()
+                self.ft_lang_norm = torch.nn.ModuleDict()
+                for layer in range(num_layers):
+                    for lang in langs:
+                        self.lang_norms[f"{lang}_{layer}"] = torch.nn.BatchNorm1d(self.output_dim)
+                    self.ft_lang_norm[str(layer)] = torch.nn.BatchNorm1d(self.output_dim)
             else:
                 num_layers += 1
                 lang_learned_means = torch.zeros(len(langs), num_layers, self.output_dim)
@@ -211,9 +211,9 @@ class TransformerEmbedder(TokenEmbedder):
         if self.lang_norms is not None:
             lang_idx = self.lang2id.get(lang)
             if lang_idx is None:
-                layer_outputs = [self.ft_lang_norm[layer](layer_output) for layer, layer_output in enumerate(layer_outputs)]
+                layer_outputs = [self.ft_lang_norm[str(layer)](layer_output.transpose(1,2)).transpose(1,2) for layer, layer_output in enumerate(layer_outputs)]
             else:
-                layer_outputs = [self.ft_lang_norm[(lang, layer)](layer_output) for layer, layer_output in enumerate(layer_outputs)]
+                layer_outputs = [self.lang_norms[f"{lang}_{layer}"](layer_output.transpose(1,2)).transpose(1,2) for layer, layer_output in enumerate(layer_outputs)]
         elif self.lang_learned_means is not None:
             lang_idx = self.lang2id.get(lang)
             if lang_idx is None:
