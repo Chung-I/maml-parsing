@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from copy import deepcopy
 
 def get_submodule(module, submodule_name, delim="."):
     parts = submodule_name.split(delim)
@@ -36,9 +35,3 @@ class CPG(nn.Module):
             cpg_weight = torch.narrow(all_weights, -1, start, numel).reshape(ori_weight.shape)
             start = start + numel
             setattr(module, weight_name, cpg_weight.data)
-
-            
-            
-
-
-
