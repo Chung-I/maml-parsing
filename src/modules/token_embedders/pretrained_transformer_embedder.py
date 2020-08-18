@@ -85,7 +85,10 @@ class TransformerEmbedder(TokenEmbedder):
                  pretrained: bool = True,
                  lang_file: str = None,
                  mean_affix: str = None,
-                 lang_norm: bool = False) -> None:
+                 lang_norm: bool = False,
+                 batch_norm: bool = False,
+                 inherit_bn: bool = False,
+                 lang_norm_affine: bool = True) -> None:
         super().__init__()
         placeholder = model_name.split("_")
         tokenizer_name = placeholder[-1]
@@ -98,6 +101,7 @@ class TransformerEmbedder(TokenEmbedder):
         self.output_dim = self.transformer_model.config.hidden_size
         self.combine_layers = combine_layers
         self.mean_affix = mean_affix
+        assert (not inherit_bn) and batch_norm # inherit_bn == True must imply batch_norm == True
 
         if self.combine_layers == "mix":
             num_layers = self.transformer_model.config.num_hidden_layers
@@ -118,13 +122,24 @@ class TransformerEmbedder(TokenEmbedder):
                 langs = fp.read().splitlines()
             self.lang2id = {lang: idx for idx, lang in enumerate(langs)}
             num_layers = self.transformer_model.config.num_hidden_layers
-            if lang_norm:
+            if lang_norm or batch_norm:
                 self.lang_norms = torch.nn.ModuleDict()
                 self.ft_lang_norm = torch.nn.ModuleDict()
                 for layer in range(num_layers):
+                    layer_batch_norm = None
+                    if batch_norm:
+                        layer_batch_norm = torch.nn.BatchNorm1d(self.output_dim)
                     for lang in langs:
-                        self.lang_norms[f"{lang}_{layer}"] = torch.nn.BatchNorm1d(self.output_dim)
-                    self.ft_lang_norm[str(layer)] = torch.nn.BatchNorm1d(self.output_dim)
+                        if batch_norm:
+                            bn = layer_batch_norm
+                        else:
+                            bn = torch.nn.BatchNorm1d(self.output_dim, affine=lang_norm_affine)
+                        self.lang_norms[f"{lang}_{layer}"] = bn
+
+                    if inherit_bn and batch_norm:
+                        self.ft_lang_norm[str(layer)] = layer_batch_norm
+                    else:
+                        self.ft_lang_norm[str(layer)] = torch.nn.BatchNorm1d(self.output_dim)
             else:
                 num_layers += 1
                 lang_learned_means = torch.zeros(len(langs), num_layers, self.output_dim)
@@ -442,6 +457,9 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
         lang_file: str = None,
         mean_affix: str = None,
         lang_norm: bool = False,
+        batch_norm: bool = False,
+        inherit_bn: bool = False,
+        lang_norm_affine: bool = True,
     ) -> None:
 
         super().__init__(
@@ -456,6 +474,9 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
             lang_file=lang_file,
             mean_affix=mean_affix,
             lang_norm=lang_norm,
+            batch_norm=batch_norm,
+            inherit_bn=inherit_bn,
+            lang_norm_affine=lang_norm_affine,
         )
         for name, param in self.transformer_model.named_parameters():
             if model_name.startswith("adapter") and 'adapter' in name:
