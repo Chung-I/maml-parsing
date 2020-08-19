@@ -98,12 +98,12 @@ class BiaffineDependencyParserMultiLangVIB(Model):
     def __init__(
         self,
         vocab: Vocabulary,
-        text_field_embedder: TextFieldEmbedder,
         encoder: Seq2SeqEncoder,
         tag_representation_dim: int,
         arc_representation_dim: int,
         vib: Params = None,
         model_name: str = None,
+        text_field_embedder: TextFieldEmbedder = None,
         tag_feedforward: FeedForward = None,
         arc_feedforward: FeedForward = None,
         pos_tag_embedding: Embedding = None,
@@ -135,6 +135,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         self.text_field_embedder = text_field_embedder
         self.encoder = encoder
+        assert text_field_embedder is not None or lexical_dropout == 1.0
 
         if model_name:
             from src.data.token_indexers import PretrainedAutoTokenizer
@@ -173,7 +174,9 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, encoder_dim]))
 
-        representation_dim = text_field_embedder.get_output_dim()
+        representation_dim = 0
+        if self._lexical_dropout < 1.0:
+            representation_dim += text_field_embedder.get_output_dim()
         if pos_tag_embedding is not None:
             representation_dim += pos_tag_embedding.get_output_dim()
 
@@ -308,7 +311,11 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 form='subword',
             )
 
-        embedded_text_input = self.text_field_embedder(words, lang=batch_lang)
+        if self._lexical_dropout < 1.0:
+            embedded_text_input = self.text_field_embedder(words, lang=batch_lang)
+        else:
+            embedded_text_input = mask.float().new_zeros((*mask.shape, 0))
+
         if self._lang_means is not None or self._ft_lang_mean is not None or self._zs_lang_mean is not None:
             batch_size, seq_len, _ = embedded_text_input.size()
             lang_mean = self._zs_lang_mean if self._zs_lang_mean is not None else self._ft_lang_mean
@@ -318,11 +325,12 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 expanded_langs = langs.unsqueeze(-1).repeat(1, seq_len)
                 means = self._lang_means[expanded_langs] 
             embedded_text_input = embedded_text_input - means.to(embedded_text_input.device)
-        if self._dropout_location == 'lm':
+        if self._dropout_location == 'lm' and self._lexical_dropout < 1.0:
             embedded_text_input = self._apply_token_dropout(embedded_text_input,
                                                             mask,
                                                             self._lexical_dropout,
                                                             form='tensor')
+
         if pos_tags is not None and self._pos_tag_embedding is not None:
             pos_tags = self._apply_token_dropout(pos_tags,
                                                  mask,

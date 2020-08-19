@@ -101,7 +101,7 @@ class TransformerEmbedder(TokenEmbedder):
         self.output_dim = self.transformer_model.config.hidden_size
         self.combine_layers = combine_layers
         self.mean_affix = mean_affix
-        assert (not inherit_bn) and batch_norm # inherit_bn == True must imply batch_norm == True
+        assert (not inherit_bn) or batch_norm # inherit_bn == True must imply batch_norm == True
 
         if self.combine_layers == "mix":
             num_layers = self.transformer_model.config.num_hidden_layers
