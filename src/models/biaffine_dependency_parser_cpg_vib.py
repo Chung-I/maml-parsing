@@ -32,6 +32,7 @@ from allennlp.training.metrics import AttachmentScores, Average, CategoricalAccu
 from src.models.biaffine_dependency_parser import BiaffineDependencyParser
 from src.modules.vib import ContinuousVIB, DiscreteVIB
 from src.modules.crf import log_partition
+from src.modules.cpg import CPG
 from src.training.util import get_lang_means, get_lang_mean
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 POS_TO_IGNORE = {"`", "''", ":", ",", ".", "PU", "PUNCT", "SYM"}
 
 
-@Model.register("ud_biaffine_parser_multilang_vib")
+@Model.register("ud_biaffine_parser_multilang_cpg_vib")
 class BiaffineDependencyParserMultiLangVIB(Model):
     """
     This dependency parser implements the multi-lingual extension
@@ -98,12 +99,12 @@ class BiaffineDependencyParserMultiLangVIB(Model):
     def __init__(
         self,
         vocab: Vocabulary,
+        text_field_embedder: TextFieldEmbedder,
         encoder: Seq2SeqEncoder,
         tag_representation_dim: int,
         arc_representation_dim: int,
         vib: Params = None,
         model_name: str = None,
-        text_field_embedder: TextFieldEmbedder = None,
         tag_feedforward: FeedForward = None,
         arc_feedforward: FeedForward = None,
         pos_tag_embedding: Embedding = None,
@@ -128,6 +129,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         predict_pos: bool = False,
         token_embedder_key: str = None,
         use_crf: bool = False,
+        lang_feat_file: str = None,
+        lang_emb_feedforward: FeedForward = None,
         initializer: InitializerApplicator = InitializerApplicator(),
         regularizer: Optional[RegularizerApplicator] = None,
     ) -> None:
@@ -135,7 +138,6 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         self.text_field_embedder = text_field_embedder
         self.encoder = encoder
-        assert text_field_embedder is not None or lexical_dropout == 1.0
 
         if model_name:
             from src.data.token_indexers import PretrainedAutoTokenizer
@@ -174,9 +176,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, encoder_dim]))
 
-        representation_dim = 0
-        if self._lexical_dropout < 1.0:
-            representation_dim += text_field_embedder.get_output_dim()
+        representation_dim = text_field_embedder.get_output_dim()
         if pos_tag_embedding is not None:
             representation_dim += pos_tag_embedding.get_output_dim()
 
@@ -287,7 +287,25 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 )
 
         self.use_crf = use_crf
-        
+
+        lang_feats = None
+        if lang_feat_file is not None:
+            import pandas as pd
+            df = pd.read_csv(lang_feat_file)
+            lang_feats = torch.from_numpy(df.to_numpy()[:, 1:].astype('float32'))
+            langs_where_feats_available = df['CODE'].tolist()
+            featlang2id = {lang: idx for idx, lang in enumerate(langs_where_feats_available)}
+            self.register_buffer('lang_feats', lang_feats)
+            self.get_lang_feats = lambda lang: self.lang_feats[featlang2id[lang]]
+            lang_feat_size = self.lang_feats.size(-1)
+            self._lang_emb_feedforward = lang_emb_feedforward or FeedForward(
+                lang_feat_size, 2, 32, Activation.by_name("relu")()
+            )
+            output_dim = self._lang_emb_feedforward.get_output_dim()
+            self._cpg_arc_attention = CPG(output_dim, self.arc_attention)
+            self._cpg_text_field_embedder = CPG(output_dim, self.text_field_embedder,
+            filter_func=(lambda n_w: 'adapter' in n_w[0] and n_w[-1].requires_grad))
+
         initializer(self)
 
     def _embed(
@@ -311,11 +329,12 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 form='subword',
             )
 
-        if self._lexical_dropout < 1.0:
-            embedded_text_input = self.text_field_embedder(words, lang=batch_lang)
-        else:
-            embedded_text_input = mask.float().new_zeros((*mask.shape, 0))
+        lang_feats = self.get_lang_feats(batch_lang)
+        lang_embs = self._lang_emb_feedforward(lang_feats)
+        self._cpg_arc_attention(lang_embs)
+        self._cpg_text_field_embedder(lang_embs)
 
+        embedded_text_input = self.text_field_embedder(words, lang=batch_lang)
         if self._lang_means is not None or self._ft_lang_mean is not None or self._zs_lang_mean is not None:
             batch_size, seq_len, _ = embedded_text_input.size()
             lang_mean = self._zs_lang_mean if self._zs_lang_mean is not None else self._ft_lang_mean
@@ -325,12 +344,11 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 expanded_langs = langs.unsqueeze(-1).repeat(1, seq_len)
                 means = self._lang_means[expanded_langs] 
             embedded_text_input = embedded_text_input - means.to(embedded_text_input.device)
-        if self._dropout_location == 'lm' and self._lexical_dropout < 1.0:
+        if self._dropout_location == 'lm':
             embedded_text_input = self._apply_token_dropout(embedded_text_input,
                                                             mask,
                                                             self._lexical_dropout,
                                                             form='tensor')
-
         if pos_tags is not None and self._pos_tag_embedding is not None:
             pos_tags = self._apply_token_dropout(pos_tags,
                                                  mask,

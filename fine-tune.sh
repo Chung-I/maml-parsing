@@ -1,5 +1,12 @@
 CV=""
 export ARCHIVE_PATH="ckpts/$1/model_epoch_${2}.tar.gz"
+
+if [[ -z "${FT_SCRIPT}" ]]; then
+  FT_SCRIPT="fine-tune.jsonnet"
+else
+  FT_SCRIPT=${FT_SCRIPT}
+fi
+
 if [ ! -f $ARCHIVE_PATH ];
 then
   python3 utils/make_archive.py -s ckpts/$1 -n $2 -m training_config/model.json || exit 1;
@@ -11,10 +18,10 @@ then
     echo $file
     CV_NUM=$(echo $(basename $file) | awk -F'-' '{print $2}')
     echo $CV_NUM
-    CV="_*-$CV_NUM-" NUM_EPOCHS=$4 FT_LANG=$3 RUN_NAME=$1_$2_$3_$5 python -W ignore run.py train training_config/fine-tune.jsonnet --include-package src -s ckpts/$1_$2_$3_cv${CV_NUM}_$5
+    CV="_*-$CV_NUM-" NUM_EPOCHS=$4 FT_LANG=$3 RUN_NAME=$1_$2_$3_$5 python -W ignore run.py train training_config/$FT_SCRIPT --include-package src -s ckpts/$1_$2_$3_cv${CV_NUM}_$5
   done
 else
-  CV="" NUM_EPOCHS=$4 FT_LANG=$3 RUN_NAME=$1_$2_$3_$5 python -W ignore run.py train training_config/fine-tune.jsonnet --include-package src -s ckpts/$1_$2_$3_$5
+  CV="" NUM_EPOCHS=$4 FT_LANG=$3 RUN_NAME=$1_$2_$3_$5 python -W ignore run.py train training_config/$FT_SCRIPT --include-package src -s ckpts/$1_$2_$3_$5
 fi
 if grep -w $3 data/ensemble_langs.txt;
 then
