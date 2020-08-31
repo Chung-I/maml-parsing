@@ -312,6 +312,8 @@ class MetaTrainer(TrainerBase):
 
         self.has_VIB = hasattr(self.model, 'VIB') and self.model.VIB and self.model.VIB.beta > 0
         self.has_pos = hasattr(self.model, '_predict_pos') and self.model._predict_pos
+        self.has_linearization = hasattr(self.model, 'linearization') and self.model.linearization is not None
+        self.has_distance = hasattr(self.model, 'distance') and self.model.distance is not None
 
         self.batch_generators = {task: self.iterator(train_data, shuffle=self.shuffle)
             for task, train_data in self.train_datas.items()}
@@ -452,6 +454,15 @@ class MetaTrainer(TrainerBase):
                 names.append("pos_acc")
                 list_values.append(pos_accs)
 
+            if self.has_linearization is not None:
+                lin_losses = [list(map(lambda x: x["metric"].get("lin_loss", 0.0), metrics)) for metrics in task_metrics]
+                names.append("lin_loss")
+                list_values.append(lin_losses)
+
+            if self.has_distance is not None:
+                dist_losses = [list(map(lambda x: x["metric"].get("dist_loss", 0.0), metrics)) for metrics in task_metrics]
+                names.append("dist_loss")
+                list_values.append(dist_losses)
 
             for name, values in zip(names, list_values):
                 self._writer.log({f"step_{name}_{task}_{i}": value

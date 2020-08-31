@@ -32,6 +32,7 @@ from allennlp.training.metrics import AttachmentScores, Average, CategoricalAccu
 from src.models.biaffine_dependency_parser import BiaffineDependencyParser
 from src.modules.vib import ContinuousVIB, DiscreteVIB
 from src.modules.crf import log_partition
+from src.modules.biaffine import DeepBiaffineScorer
 from src.training.util import get_lang_means, get_lang_mean
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,8 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         predict_pos: bool = False,
         token_embedder_key: str = None,
         use_crf: bool = False,
+        predict_linearization: bool = False,
+        predict_distance: bool = False,
         initializer: InitializerApplicator = InitializerApplicator(),
         regularizer: Optional[RegularizerApplicator] = None,
     ) -> None:
@@ -143,8 +146,9 @@ class BiaffineDependencyParserMultiLangVIB(Model):
 
         encoder_dim = self.encoder.get_output_dim()
 
+        default_activation_name = "elu"
         self.head_arc_feedforward = arc_feedforward or FeedForward(
-            encoder_dim, 1, arc_representation_dim, Activation.by_name("elu")()
+            encoder_dim, 1, arc_representation_dim, Activation.by_name(default_activation_name)()
         )
         self.child_arc_feedforward = copy.deepcopy(self.head_arc_feedforward)
 
@@ -155,7 +159,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         num_labels = self.vocab.get_vocab_size("head_tags")
 
         self.head_tag_feedforward = tag_feedforward or FeedForward(
-            encoder_dim, 1, tag_representation_dim, Activation.by_name("elu")()
+            encoder_dim, 1, tag_representation_dim, Activation.by_name(default_activation_name)()
         )
         self.child_tag_feedforward = copy.deepcopy(self.head_tag_feedforward)
 
@@ -287,6 +291,30 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                 )
 
         self.use_crf = use_crf
+
+        self.linearization = None
+        if predict_linearization:
+            self.linearization = DeepBiaffineScorer(
+                encoder_dim,
+                encoder_dim,
+                arc_representation_dim, 1,
+                hidden_func=Activation.by_name(default_activation_name)(),
+                pairwise=True, dropout=self._dropout,
+            )
+            self._lang_lin_losses: Dict[str, Average] = defaultdict(Average)
+            self.lin_crit = torch.nn.CrossEntropyLoss(ignore_index=-1, reduction='sum') # ignore padding
+
+        self.distance = None
+        if predict_distance:
+            self.distance = DeepBiaffineScorer(
+                encoder_dim,
+                encoder_dim,
+                arc_representation_dim, 1,
+                hidden_func=Activation.by_name(default_activation_name)(),
+                pairwise=True, dropout=self._dropout,
+            )
+            self._lang_dist_losses: Dict[str, Average] = defaultdict(Average)
+
         
         initializer(self)
 
@@ -416,6 +444,43 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         # shape (batch_size, sequence_length, sequence_length)
         attended_arcs = self.arc_attention(head_arc_representation, child_arc_representation)
 
+        sequence_length = attended_arcs.size(1)
+        if self.distance or self.linearization:
+            head_offset = torch.arange(mask.size(1), device=mask.device).view(1, 1, -1).expand(mask.size(0), -1, -1) - \
+                torch.arange(mask.size(1), device=mask.device).view(1, -1, 1).expand(mask.size(0), -1, -1)
+
+        valid_positions = mask.sum() - batch_size
+
+        range_vector = get_range_vector(batch_size, get_device_of(attended_arcs)).unsqueeze(1)
+        timestep_index = get_range_vector(sequence_length, get_device_of(attended_arcs))
+        child_index = (
+            timestep_index.view(1, sequence_length).expand(batch_size, sequence_length).long()
+        )
+
+        lin_loss = None
+        if self.linearization:
+            lin_scores = self.linearization(encoded_text, encoded_text).squeeze(3)
+            head_directions = torch.sign(head_offset).float()
+            attended_arcs += F.logsigmoid(lin_scores * head_directions).detach()
+            lin_ce = -(F.logsigmoid(lin_scores) * (head_directions > 0).float() + \
+                       F.logsigmoid(-lin_scores) * (1.0 - (head_directions > 0).float()))
+            lin_ce = lin_ce * float_mask.unsqueeze(1) * float_mask.unsqueeze(2)
+            lin_ce = lin_ce[range_vector, child_index, head_indices]
+            lin_ce = lin_ce[:, 1:]
+            lin_loss = lin_ce.sum() / valid_positions.float()
+
+        dist_loss = None
+        if self.distance:
+            dist_scores = self.distance(encoded_text, encoded_text).squeeze(3)
+            dist_pred = 1 + F.softplus(dist_scores)
+            dist_target = torch.abs(head_offset)
+            dist_kld = -torch.log((dist_target.float() - dist_pred)**2/2 + 1)
+            attended_arcs += dist_kld.detach()
+            dist_kld = dist_kld * float_mask.unsqueeze(1) * float_mask.unsqueeze(2)
+            dist_kld = dist_kld[range_vector, child_index, head_indices]
+            dist_kld = dist_kld[:, 1:]
+            dist_loss = -dist_kld.sum() / valid_positions.float()
+
         minus_inf = -1e8
         minus_mask = (1 - float_mask) * minus_inf
         attended_arcs = attended_arcs + minus_mask.unsqueeze(2) + minus_mask.unsqueeze(1)
@@ -427,9 +492,9 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         if return_arc_representation:
             return head_arc_representation, child_arc_representation, \
                 head_tag_representation, child_tag_representation, \
-                attended_arcs, mask, head_tags, head_indices
+                attended_arcs, lin_loss, dist_loss, mask, head_tags, head_indices
         return head_tag_representation, child_tag_representation, attended_arcs, \
-            mask, head_tags, head_indices
+            lin_loss, dist_loss, mask, head_tags, head_indices
 
     def _attend_and_normalize(
         self,
@@ -501,7 +566,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         else:
             encoded_text = self.encoder(embedded_text, mask)
 
-        head_tag_representation, child_tag_representation, attended_arcs, mask, \
+        head_tag_representation, child_tag_representation, attended_arcs, _, _, mask, \
             head_tags, head_indices = self._project(encoded_text, mask, head_tags, head_indices)
         normalized_arc_logits, normalized_pairwise_head_logits, lengths = self._attend_and_normalize(
             head_tag_representation, child_tag_representation, attended_arcs, mask)
@@ -591,7 +656,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             }
 
         head_arc_representation, child_arc_representation, \
-        head_tag_representation, child_tag_representation, attended_arcs, mask, \
+        head_tag_representation, child_tag_representation, attended_arcs, lin_loss, dist_loss, mask, \
             head_tags, head_indices = self._project(encoded_text, mask, head_tags, head_indices,
                                                     return_arc_representation=True)
         predicted_heads, predicted_head_tags, mask, arc_nll, tag_nll, per_sample_loss = \
@@ -600,9 +665,22 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             attended_arcs, mask, head_tags, head_indices,
         )
 
-        loss = loss_ratios["dep"] * (arc_nll + tag_nll)
+        full_dep_loss = arc_nll + tag_nll
+        if lin_loss is not None:
+            full_dep_loss += lin_loss
+        if dist_loss is not None:
+            full_dep_loss += dist_loss
+        loss = loss_ratios["dep"] * full_dep_loss
         if loss_ratios["pos"] > 0.0:
             loss = loss + loss_ratios["pos"] * pos_loss
+
+        if lin_loss is not None:
+            avg_metric_obj = self._lang_lin_losses[batch_lang]
+            avg_metric_obj(lin_loss)
+
+        if dist_loss is not None:
+            avg_metric_obj = self._lang_dist_losses[batch_lang]
+            avg_metric_obj(dist_loss)
 
         if head_indices is not None and head_tags is not None:
             evaluation_mask = self._get_mask_for_eval(mask[:, 1:], pos_tags)
@@ -624,6 +702,14 @@ class BiaffineDependencyParserMultiLangVIB(Model):
                         avg_metric_obj = avg_metric_dict[batch_lang]
                         vib_value = avg_metric_obj.get_metric(reset=True)
                         metric.update({key: vib_value})
+                if lin_loss is not None:
+                    avg_metric_obj = self._lang_lin_losses[batch_lang]
+                    value = avg_metric_obj.get_metric(reset=True)
+                    metric.update({"lin_loss": value})
+                if dist_loss is not None:
+                    avg_metric_obj = self._lang_dist_losses[batch_lang]
+                    value = avg_metric_obj.get_metric(reset=True)
+                    metric.update({"dist_loss": value})
 
 
         output_dict = {}
