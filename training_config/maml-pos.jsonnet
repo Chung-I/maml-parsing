@@ -7,10 +7,10 @@
 local MAX_LEN = 512;
 local MODEL_NAME = "bert-base-multilingual-cased";
 local NUM_EPOCHS = 10;
-local HIDDEN_SIZE = 10;
+local HIDDEN_SIZE = 100;
 local BIDIR = true;
 local NUM_DIRS = if BIDIR then 2 else 1;
-local TAG_DIM = 10;
+local TAG_DIM = 100;
 local TOKEN_EMBEDDER_KEY = "bert";
 
 local BASE_READER(x, alternate=true) = {
@@ -45,6 +45,8 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
 
 {
     "dataset_readers": READERS(TRAIN_LANGS),
+    // "random_seed": 531,
+    // "numpy_seed": 531,
     "vocabulary": {
         "type": "from_files",
         "directory": "data/vocabulary"
@@ -57,12 +59,12 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
     },
     "model": {
         "type": "ud_biaffine_parser_multilang_vib",
-        "arc_representation_dim": 20,
-        "tag_representation_dim": 20,
+        "arc_representation_dim": 200,
+        "tag_representation_dim": 200,
         "dropout": 0.0,
         "token_embedder_key": TOKEN_EMBEDDER_KEY,
         "pos_tag_embedding": {
-            "embedding_dim": 10,
+            "embedding_dim": 100,
             "vocab_namespace": "pos"
         },
         "lexical_dropout": 1.0,
@@ -73,7 +75,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "encoder": {
             "type": "lstm",
             "hidden_size": HIDDEN_SIZE,
-            "input_size": 10,
+            "input_size": 100,
             "num_layers": 3,
             "dropout": 0.0,
             "bidirectional": BIDIR,
@@ -81,6 +83,16 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "per_lang_vib": false,
         "langs_for_early_stop": TRAIN_LANGS,
         "model_name": MODEL_NAME,
+        "initializer": [
+          [".*projection.*weight", {"type": "xavier_uniform"}],
+          [".*projection.*bias", {"type": "zero"}],
+          [".*tag_bilinear.*weight", {"type": "xavier_uniform"}],
+          [".*tag_bilinear.*bias", {"type": "zero"}],
+          [".*weight_ih.*", {"type": "xavier_uniform"}],
+          [".*weight_hh.*", {"type": "orthogonal"}],
+          [".*bias_ih.*", {"type": "zero"}],
+          [".*bias_hh.*", {"type": "lstm_hidden_bias"}]
+        ],
     },
     // UDTB v2.0 is available at https://github.com/ryanmcd/uni-dep-tb
     // Set TRAIN_PATHNAME='std/**/*train.conll'
@@ -106,7 +118,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "patience": 10,
         "validation_metric": "+LAS_AVG",
         "save_embedder": true,
-        "num_serialized_models_to_keep": -1,
+        "num_serialized_models_to_keep": 1,
         "num_gradient_accumulation_steps": 2,
         "tasks_per_step": 10,
         "wrapper": {
