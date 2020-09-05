@@ -51,6 +51,7 @@ class Trainer(TrainerBase):
         num_epochs: int = 20,
         serialization_dir: Optional[str] = None,
         num_serialized_models_to_keep: int = 20,
+        save_embedder: bool = True,
         keep_serialized_model_every_num_seconds: int = None,
         checkpointer: Checkpointer = None,
         model_save_interval: float = None,
@@ -208,6 +209,7 @@ class Trainer(TrainerBase):
         self.optimizer = optimizer
         self.train_data = train_dataset
         self._validation_data = validation_dataset
+        self._save_embedder = save_embedder
 
         if patience is None:  # no early stopping
             if validation_dataset:
@@ -664,8 +666,16 @@ class Trainer(TrainerBase):
         if self._momentum_scheduler is not None:
             training_states["momentum_scheduler"] = self._momentum_scheduler.state_dict()
 
+        if self._save_embedder:
+            model_state = self.model.state_dict()
+        else:
+            model_state = filter_state_dict(self.model.state_dict(),
+                lambda k, v: 'transformer_model' not in k or \
+                             'adapter' in k or \
+                             'LayerNorm' in k)
+            training_states = {}
         self._checkpointer.save_checkpoint(
-            model_state=self.model.state_dict(),
+            model_state=model_state,
             epoch=epoch,
             training_states=training_states,
             is_best_so_far=self._metric_tracker.is_best_so_far(),
@@ -812,6 +822,7 @@ class Trainer(TrainerBase):
                 num_serialized_models_to_keep=num_serialized_models_to_keep,
                 keep_serialized_model_every_num_seconds=keep_serialized_model_every_num_seconds,
             )
+        save_embedder = params.pop_bool("save_embedder", True)
         model_save_interval = params.pop_float("model_save_interval", None)
         summary_interval = params.pop_int("summary_interval", 100)
         histogram_interval = params.pop_int("histogram_interval", None)
@@ -850,6 +861,7 @@ class Trainer(TrainerBase):
             shuffle=shuffle,
             num_epochs=num_epochs,
             serialization_dir=serialization_dir,
+            save_embedder=save_embedder,
             cuda_device=cuda_device,
             grad_norm=grad_norm,
             grad_clipping=grad_clipping,
