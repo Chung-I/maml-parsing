@@ -453,6 +453,7 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
         dropout: float = 0.0,
         combine_layers: str = "mix",
         adapter_size: int = 8,
+        ft_layernorm: bool = False,
         pretrained: bool = True,
         lang_file: str = None,
         mean_affix: str = None,
@@ -479,7 +480,10 @@ class PretrainedTransformerEmbedder(TransformerEmbedder):
             lang_norm_affine=lang_norm_affine,
         )
         for name, param in self.transformer_model.named_parameters():
-            if model_name.startswith("adapter") and 'adapter' in name:
-                param.requires_grad = True
+            if model_name.startswith("adapter"):
+                if 'adapter' in name:
+                    param.requires_grad = True
+                elif ft_layernorm and 'LayerNorm' in name:
+                    param.requires_grad = True
             else:
                 param.requires_grad = requires_grad
