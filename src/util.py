@@ -461,6 +461,42 @@ class _VisualizeManager:
                                for key in all_results[0].keys()}
         return all_batched_results
 
+    def _get_arc_and_tag_logits(self):
+        has_reader = self._dataset_reader is not None
+        index = 0
+        all_results = []
+        def get_sentence_embedding(result):
+            length = len(result['words'])
+            *arcs, = torch.tensor(result['arc_log_probs']).transpose(0, 1)[1:length,:length]
+            # *tags, = torch.tensor(result['tag_log_probs'])[:,:length,:length]
+            heads = result["gold_heads"]
+            deprels = result["gold_tags"]
+            poss = result["upos"][:length]
+            predicted_deprels = result["predicted_dependencies"]
+            predicted_heads = result["predicted_heads"]
+            langs = [result["langs"] for _ in range(length)]
+            positions = list(range(len(poss)))
+            return {"arcs": arcs, "poss": poss,
+                    "deprels": deprels, "heads": heads,
+                    "pred_deprels": predicted_deprels, "pred_heads": predicted_heads,
+                    "langs": langs}
+        for batch_data in tqdm(lazy_groups_of(self._get_instance_data(), self._batch_size)):
+            if len(batch_data) == 1:
+                results = [self._predictor.predict_instance(batch_data[0])]
+            else:
+                results = self._predictor.predict_batch_instance(batch_data)
+            for input_instance, output in zip(batch_data, results):
+                result =  self._predictor.dump_line(output)
+                self._maybe_print_to_console_and_file(index, result, str(input_instance))
+                index = index + 1
+            proc_results = list(map(get_sentence_embedding, results))
+            batched_proc_results = {key: flatten([result[key] for result in proc_results])
+                                    for key in proc_results[0].keys()}
+            all_results.append(batched_proc_results)
+        all_batched_results = {key: flatten([result[key] for result in all_results])
+                               for key in all_results[0].keys()}
+        return all_batched_results
+
     def run(self) -> None:
         has_reader = self._dataset_reader is not None
         index = 0
