@@ -257,7 +257,7 @@ class BiaffineDependencyParserMultiLangVIB(Model):
         assert adv_layer in ['vib', 'encoder']
         self._adv_layer = adv_layer
 
-        assert inspect_layer in ['embedding', 'vib', 'encoder', 'projection']
+        assert inspect_layer in ['embedding', 'vib', 'encoder', 'projection', 'adjacency']
         self._inspect_layer = inspect_layer
 
         self.typo_encoder = typo_encoder
@@ -734,6 +734,12 @@ class BiaffineDependencyParserMultiLangVIB(Model):
             child_tag_reps = child_tag_representation[range_vector, child_index]
             output_dict["arc_hidden_state"] = torch.cat([head_arc_reps, child_arc_reps], dim=-1)
             output_dict["tag_hidden_state"] = torch.cat([head_tag_reps, child_tag_reps], dim=-1)
+        elif self._inspect_layer == "adjacency":
+            normalized_arc_logits, normalized_pairwise_head_logits, lengths = self._attend_and_normalize(
+                head_tag_representation, child_tag_representation, attended_arcs, mask)
+            output_dict["arc_log_probs"] = normalized_arc_logits
+            output_dict["tag_log_probs"] = normalized_pairwise_head_logits
+            output_dict["lengths"] = lengths
         else:
             raise NotImplementedError
 
