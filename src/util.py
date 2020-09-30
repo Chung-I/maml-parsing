@@ -479,7 +479,7 @@ class _VisualizeManager:
             return {"arcs": arcs, "poss": poss,
                     "deprels": deprels, "heads": heads,
                     "pred_deprels": predicted_deprels, "pred_heads": predicted_heads,
-                    "langs": langs}
+                    "langs": langs, "positions": positions}
         for batch_data in tqdm(lazy_groups_of(self._get_instance_data(), self._batch_size)):
             if len(batch_data) == 1:
                 results = [self._predictor.predict_instance(batch_data[0])]

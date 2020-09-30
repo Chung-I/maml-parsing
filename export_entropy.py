@@ -101,7 +101,7 @@ overrides = {"dataset_readers": {},
                  "is_first_pass_for_vocab": False,
                  "lazy": True,
                  "read_language": False,
-                 "read_dependencies": args.layer == "projection",
+                 "read_dependencies": True,
                  "use_language_specific_deprel": False,
                  "deprel_file": "data/vocabulary/head_tags.txt",
                  "token_indexers": {
