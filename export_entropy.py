@@ -82,12 +82,12 @@ archive_dir = Path(args.archive).resolve().parent
 
 print(archive_dir)
 
-selected_langs = args.langs
+langs = args.langs
 selected_tags = ["VERB", "NOUN", "ADJ", "ADV", "ADP"]
 selected_locs = [0, 1, 2, 3, 4, 5]
 ud_root = Path(os.environ['UD_GT'])
 paths = list(ud_root.rglob(f"*-ud-{args.split}.conllu"))
-paths = list(filter(lambda x: x.name.split('_')[0] in selected_langs, paths))
+paths = list(filter(lambda x: x.name.split('_')[0] in langs or x.name.split('-')[0] in langs, paths))
 
 config_file = archive_dir / "config.json"
 file_params = Params.from_file(config_file)
