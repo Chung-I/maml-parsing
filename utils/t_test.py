@@ -117,16 +117,16 @@ USABLE_CPU_COUNT = get_usable_cpu_count()
 def get_bar(*args, **kwargs):
     return tqdm.tqdm(*args, ncols=80, **kwargs)
 
-def mp_progress_map(func, arg_iter, num_workers=USABLE_CPU_COUNT):
-    print(num_workers)
+def mp_progress_map(func, arg_iter, num_workers=USABLE_CPU_COUNT, disable_tqdm=False):
     rs = []
-    pool = mp.Pool(processes=1)
+    pool = mp.Pool(processes=num_workers)
     for args in arg_iter:
         rs.append(pool.apply_async(func, args))
     pool.close()
 
     rets = []
-    for r in get_bar(rs):
+    _get_bar =  (lambda x: x) if disable_tqdm else get_bar
+    for r in _get_bar(rs):
         rets.append(r.get())
     pool.join()
     return rets
@@ -471,20 +471,12 @@ METRIC_FUNCS = {
 }
 
 def pairwise_score(gold_words, system_words, key_function):
-    gold = len(gold_words)
-    system = len(system_words)
-    aligned = len(gold_words)
-    assert gold == system
-
-    correct = 0
-    for gold_word, system_word in zip(gold_words, system_words):
-        assert gold_word.columns[FORM] == system_word.columns[FORM]
-        assert gold_word.span.start == gold_word.span.start
-        assert gold_word.span.end == gold_word.span.end
-        if key_function(gold_word) == key_function(system_word):
-            correct += 1
-
-    return Score(gold, system, correct, aligned)
+    #assert gold_word.columns[FORM] == system_word.columns[FORM]
+    #assert gold_word.span.start == gold_word.span.start
+    #assert gold_word.span.end == gold_word.span.end
+    correctness = [int(key_function(gold_word) == key_function(system_word))
+                   for gold_word, system_word in zip(gold_words, system_words)]
+    return correctness
 
 def get_alignment(gold_ud, system_ud):
     # Check that the underlying character sequences do match.
@@ -506,39 +498,46 @@ def get_alignment(gold_ud, system_ud):
     alignment = align_words(gold_ud.words, system_ud.words)
     return alignment
 
+def mean(l):
+    return sum(l) / len(l)
+
 
 def load_conllu_file(path):
     _file = open(path, mode="r", **({"encoding": "utf-8"} if sys.version_info >= (3, 0) else {}))
     return load_conllu(_file)
 
-def paired_permutation_test(gold_ud, system_ud_a, system_ud_b):
-    shuffled_ud_a_words = []
-    shuffled_ud_b_words = []
-    for word_a, word_b in zip(system_ud_a.words, system_ud_b.words):
-        if np.random.uniform() >= 0.5:
-            word_a, word_b = word_b, word_a
-        shuffled_ud_a_words.append(word_a)
-        shuffled_ud_b_words.append(word_b)
-    shuffled_diffs = {metric: pairwise_score(gold_ud.words, shuffled_ud_a_words, METRIC_FUNCS[metric]).f1 - 
-                              pairwise_score(gold_ud.words, shuffled_ud_b_words, METRIC_FUNCS[metric]).f1
-                       for metric in METRICS}
+def paired_permutation_test(correctness_a, correctness_b):
+
+    paired_correctness = {metric: list(zip(*[(a, b) if p > 0.5 else (b, a)
+                                             for a, b, p in zip(correctness_a[metric], correctness_b[metric],
+                                                                np.random.uniform(size=len(correctness_a[metric])))]))
+                          for metric in METRICS}
+    shuffled_diffs = {metric: mean(paired_correctness[metric][0]) - mean(paired_correctness[metric][1])
+                      for metric in METRICS}
     return shuffled_diffs
 
-def evaluate_wrapper(gold_file, system_file_a, system_file_b, n_trials):
+def evaluate_wrapper(gold_file, system_file_a, system_file_b, n_trials, disable_tqdm,
+                     skip_if_less):
     # Load CoNLL-U files
     gold_ud = load_conllu_file(gold_file)
     system_ud_a = load_conllu_file(system_file_a)
     system_ud_b = load_conllu_file(system_file_b)
     signif_cnts = {metric: [] for metric in METRICS}
-    diff = {metric: pairwise_score(gold_ud.words, system_ud_a.words, METRIC_FUNCS[metric]).f1 -
-                    pairwise_score(gold_ud.words, system_ud_b.words, METRIC_FUNCS[metric]).f1
+    correctness_a = {metric: pairwise_score(gold_ud.words, system_ud_a.words, METRIC_FUNCS[metric])
+                     for metric in METRICS}
+    correctness_b = {metric: pairwise_score(gold_ud.words, system_ud_b.words, METRIC_FUNCS[metric])
+                     for metric in METRICS}
+    diff = {metric: mean(correctness_a[metric]) - mean(correctness_b[metric])
             for metric in METRICS}
-    print(diff)
-    #shuffled_diffs = mp_progress_map(paired_permutation_test,
-    #                          [(gold_ud, system_ud_a, system_ud_b) for i in range(n_trials)])
-    shuffled_diffs = []
-    for i in tqdm.tqdm(range(n_trials)):
-        shuffled_diffs.append(paired_permutation_test(gold_ud, system_ud_a, system_ud_b))
+    if skip_if_less and all([diff[metric] < 0 for metric in METRICS]):
+        return {metric: 1.0 for metric in METRICS}
+
+    #shuffled_diffs = []
+    #for i in tqdm.tqdm(range(n_trials)):
+    #    shuffled_diffs.append(paired_permutation_test(correctness_a, correctness_b))
+    shuffled_diffs = mp_progress_map(paired_permutation_test, 
+                                     [(correctness_a, correctness_b) for i in range(n_trials)],
+                                     disable_tqdm=disable_tqdm)
 
     significances = {metric: (sum([shuffled_diff[metric] > diff[metric] for shuffled_diff in shuffled_diffs]) + 1)/(n_trials+1)
                      for metric in METRICS}
@@ -555,13 +554,17 @@ def main():
                         help="number of samples of permutations")
     parser.add_argument("--verbose", "-v", default=False, action="store_true",
                         help="Print all metrics.")
+    parser.add_argument("--skip-if-less", action='store_true',
+                        help='skip if former system file performs worse than latter')
     parser.add_argument("--counts", "-c", default=False, action="store_true",
                         help="Print raw counts of correct/gold/system/aligned words instead of prec/rec/F1 for all metrics.")
+    parser.add_argument("--disable-tqdm", action='store_true', help='disable tqdm if specified.')
     args = parser.parse_args()
 
     # Evaluate
     for system_file_a, system_file_b in combinations(args.system_files, 2):
-        significances = evaluate_wrapper(args.gold_file, system_file_a, system_file_b, args.n_trials)
+        significances = evaluate_wrapper(args.gold_file, system_file_a, system_file_b,
+                                         args.n_trials, args.disable_tqdm, args.skip_if_less)
         print(significances)
 
 if __name__ == "__main__":

@@ -30,14 +30,19 @@ def get_gold_paths(lang, split='train'):
     
     return list(gold_files)
 
+def get_pair(dep):
+    head, rel, child = dep
+    return (head.upos, child.upos)
 
-def get_counts(ud):
+def get_pair_and_dist(dep):
+    head, rel, child = dep
+    return (head.upos, child.upos, int(child.id) - int(head.id))
+
+def get_counts(doc, key_func=get_pair_and_dist):
     counts = Counter()
-    for word in ud.words:
-        parent_upos = word.parent.columns[UPOS] if word.parent is not None else ROOT
-        triple = (parent_upos, word.columns[UPOS],
-                  (int(word.columns[ID]) - int(word.columns[HEAD])))
-        counts.update([triple])
+    for sent in doc.sentences:
+        for dep in sent.dependencies:
+            counts.update([key_func(dep)])
     return counts
 
 def normalize_counts(counts, normalization_const: Union[float, None]=None):
@@ -52,11 +57,12 @@ def normalize_counts(counts, normalization_const: Union[float, None]=None):
 def train(args):
     paths_of_langs = [get_gold_paths(lang) for lang in args.training_languages]
     normalized_counts_langs = []
+    key_funcs = {"pair": get_pair, "dist": get_pair_and_dist}
     for paths in paths_of_langs:
         counts_lang = Counter()
         for path in paths:
-            ud = load_conllu_file(str(path))
-            counts = get_counts(ud)
+            doc = Document(CoNLL.conll2dict(input_file=str(path)))
+            counts = get_counts(doc, key_funcs[args.key_func])
             counts_lang += counts
         normalized_counts_lang = normalize_counts(counts_lang, args.normalization_constant)
         normalized_counts_langs.append(normalized_counts_lang)
@@ -87,9 +93,24 @@ def get_ud_in_sents(ud):
     return sents
 
 class Parser:
-    def __init__(self, model, head_neutral=False):
+    def __init__(self, model, head_neutral=False, use_dist=False):
         self.model = model
+        self.use_dist = use_dist
         self.head_neutral = head_neutral
+    def filter_key(self, head_pos, child_pos, child_idx, head_idx):
+        if self.use_dist:
+            return head_pos, child_pos, child_idx - head_idx
+        else:
+            return head_pos, child_pos
+    def get_prob(self, head_pos, child_pos, head_idx, child_idx):
+        if self.head_neutral:
+            cnt_bothside = [self.model.get(self.filter_key(head_pos, child_pos, child_idx, head_idx), 0),
+                            self.model.get(self.filter_key(head_pos, child_pos, head_idx, child_idx), 0)]
+            cnt = sum(cnt_bothside) / len(cnt_bothside)
+        else:
+            cnt = self.model.get(self.filter_key(head_pos, child_pos, child_idx, head_idx), 0)
+        return cnt
+
     def parse(self, doc):
         return [self.parse_sent(sent) for sent in doc.sentences]
     def parse_sent(self, sent):
@@ -100,12 +121,7 @@ class Parser:
         for child_idx, child_pos in enumerate(part_of_speeches):
             unnormed_prob = []
             for head_idx, head_pos in enumerate([ROOT] + part_of_speeches):
-                if self.head_neutral:
-                    cnt_bothside = [self.model.get((head_pos, child_pos, child_idx - head_idx), 0),
-                                    self.model.get((head_pos, child_pos, head_idx - child_idx), 0)]
-                    cnt = sum(cnt_bothside) / len(cnt_bothside)
-                else:
-                    cnt = self.model.get((head_pos, child_pos, child_idx - head_idx), 0)
+                cnt = self.get_prob(head_pos, child_pos, head_idx, child_idx)
                 unnormed_prob.append(cnt)
             total_weight = sum(unnormed_prob)
             if total_weight == 0:
@@ -117,6 +133,12 @@ class Parser:
         probs = np.log(probs + EPS)
         pred_heads = chuliu_edmonds_one_root(probs)[1:]
         return pred_heads
+
+    @classmethod
+    def load_model(cls, model_file, head_neutral, use_dist):
+        with open(model_file, 'rb') as fp:
+            count_based_model = pickle.load(fp)
+        return cls(count_based_model, head_neutral, use_dist)
 
 def write_heads_to_doc(doc, list_pred_heads):
     assert len(doc.sentences) == len(list_pred_heads)
@@ -132,36 +154,49 @@ def write_doc_to_file(doc, out_file):
         fp.write(conll_string)
 
 def predict(args):
-    if (args.output_file == None) == (args.output_dir == None):
-        parser.error('exactly one of output_file or output_dir must be specified')
-    with open(args.model_file, 'rb') as fp:
-        count_based_model = pickle.load(fp)
-    parser = Parser(count_based_model, args.head_neutral)
+    assert (args.output_file == None) != (args.output_dir == None), \
+        'exactly one of output_file or output_dir must be specified'
+    parser = Parser.load_model(args.model_file, args.head_neutral, args.use_dist)
     doc = Document(CoNLL.conll2dict(input_file=args.input_file))
     pred_heads = parser.parse(doc)
     write_heads_to_doc(doc, pred_heads)
     if args.output_file is not None:
         write_doc_to_file(doc, args.output_file)
     elif args.output_dir is not None:
-        name = Path(args.input_file).name
-        output_file = Path(args.output_dir).joinpath(name)
+        if args.result_file is not None:
+            if args.save_as_tb:
+                lang = Path(args.input_file).name.split("-")[0]
+            else:
+                lang = Path(args.input_file).name.split("_")[0]
+            parent_dir = Path(f"{args.output_dir}_10_{lang}_zs")
+            parent_dir.mkdir(parents=True, exist_ok=True)
+            output_file = parent_dir.joinpath(args.result_file)
+            #os.symlink(output_file.absolute(), output_file.absolute)
+        else:
+            name = Path(args.input_file).name
+            output_file = Path(args.output_dir).joinpath(name)
         write_doc_to_file(doc, output_file)
 
 if __name__ == '__main__':
+    parent_parser = argparse.ArgumentParser(add_help=False)
+    parent_parser.add_argument("--key-func", choices=['pair', 'dist'], default='pair')
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
-    train_parser = subparsers.add_parser('train')
+    train_parser = subparsers.add_parser('train', parents=[parent_parser])
     train_parser.add_argument('--training-languages', nargs='+', required=True)
     train_parser.add_argument('--normalization-constant', type=float, default=10000.0,
                               help='normalize and multiply by this value to prevent numerical issues')
     train_parser.add_argument('--model-file', type=str, required=True,
                               help='location to store count-based model file')
     train_parser.set_defaults(func=train)
-    predict_parser = subparsers.add_parser('predict')
+    predict_parser = subparsers.add_parser('predict', parents=[parent_parser])
     predict_parser.add_argument('--input-file', required=True)
     predict_parser.add_argument('--model-file', required=True)
+    predict_parser.add_argument('--save-as-tb', action='store_true')
     predict_parser.add_argument('--output-file')
     predict_parser.add_argument('--output-dir', help='file name will be the name of input file if provided.')
+    predict_parser.add_argument('--result-file')
+    predict_parser.add_argument('--use-dist', action='store_true')
     predict_parser.add_argument('--head-neutral', action='store_true',
                                 help='average the prob of (HEAD, CHILD, D) and (HEAD, CHILD, -D).')
     predict_parser.set_defaults(func=predict)
