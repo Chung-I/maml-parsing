@@ -1,7 +1,7 @@
 export WANDB_MODE=""
 while IFS=" " read -a words; do
   FT_LANG="${words[0]}";
-  for i in 1 0 3 5 10 ; do
+  for i in 2 ; do
     NUM_EPOCHS=$3;
     if ! ls ${UD_ROOT}${FT_LANG}**-train.conllu 1> /dev/null 2>&1;
     then
@@ -27,7 +27,7 @@ while IFS=" " read -a words; do
       #    echo "no ckpts/${method}/model_state_epoch_${i}.th, or already runned; continue"
       #  fi
       #done
-      for method in multi-fixed-lstm-mix-shift-langnorm ;
+      for method in multi-adapter-lr3e-4-uriel ;
       do
         if grep $FT_LANG data/ensemble_langs.txt;
         then

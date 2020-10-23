@@ -136,7 +136,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + "*-ud-" + split + ".conllu";
         "num_gradient_accumulation_steps": 2,
         "tasks_per_step": 10,
         "wrapper": {
-            "type": "maml",
+            "type": "fomaml",
             "optimizer_cls": "Adam",
             "optimizer_kwargs": {
                 "lr": 3e-4,

@@ -45,4 +45,4 @@ def maybe_add_pretrained_embeddings(serialization_dir, weights_file):
 
 weights = "best.th"
 
-weights, is_tmp_weight = maybe_add_pretrained_embeddings(args.s, weights)
+maybe_add_pretrained_embeddings(args.s, weights)

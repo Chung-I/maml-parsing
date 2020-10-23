@@ -7,7 +7,7 @@
 local MAX_LEN = 512;
 local MODEL_NAME = "bert-base-multilingual-cased";
 local NUM_EPOCHS = std.parseInt(std.extVar("NUM_EPOCHS"));
-local BS = 8;
+local BS = std.extVar("MY_BS");
 local TOKEN_EMBEDDER_KEY = "bert";
 local BASE_READER(x, alternate=true) = {
     "type": "ud_multilang",
@@ -39,8 +39,8 @@ local UD_ROOT = std.extVar("UD_ROOT");
 local DATA_PATH(lang, split) = UD_ROOT + lang + CV + "**-" + split + ".conllu";
 
 {
-    "dataset_reader": READER(LANG, false),
-    "validation_dataset_reader": READER(LANG, false),
+    "dataset_reader": BASE_READER(LANG, false),
+    "validation_dataset_reader": BASE_READER(LANG, false),
     "vocabulary": {
         "type": "from_files",
         "directory": "data/vocabulary"
@@ -49,6 +49,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + CV + "**-" + split + ".conllu";
         "type": "bucket",
         "batch_size": BS,
         "sorting_keys": [["words", TOKEN_EMBEDDER_KEY + "___mask"]],
+        "instances_per_epoch": if std.extVar("SUFFIX") == "one_step" then BS else null,
         // "maximum_samples_per_batch": [TOKEN_EMBEDDER_KEY + "___mask", BS * MAX_LEN],
     },
     "validation_iterator": {
@@ -71,20 +72,19 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + CV + "**-" + split + ".conllu";
         "num_epochs": NUM_EPOCHS,
         "optimizer": {
           "type": "adam",
-          "lr": 5e-5,
+          "lr": 3e-4,
         },
-        "learning_rate_scheduler": {
-          "type": "slanted_triangular",
-          "num_epochs": NUM_EPOCHS,
-          "num_steps_per_epoch": 1000, // dummy value, modified in the code
-        },
-        "patience": 10,
+        // "learning_rate_scheduler": {
+        //   "type": "slanted_triangular",
+        //   "num_epochs": NUM_EPOCHS,
+        //   "num_steps_per_epoch": 1000, // dummy value, modified in the code
+        // },
         "grad_norm": 5.0,
-        "save_embedder": false,
         "ft_lang_mean_dir": "ckpts/" + LANG + "_mean_fixed-bert",
         "validation_metric": "+LAS_AVG",
         "num_serialized_models_to_keep": 1,
         "num_gradient_accumulation_steps": 1,
+        "save_embedder": false,
         // "wandb": {
         //     "name": std.extVar("RUN_NAME"),
         //     "project": "allennlp-maml-parsing",
