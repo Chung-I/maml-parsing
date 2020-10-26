@@ -38,7 +38,7 @@ local BASE_READER(x, alternate=true) = {
 local _TRAIN_LANGS = ['af', 'grc', 'pt', 'sv', 'no', 'es', 'zh', 'fro', 'ja', 'tr', 'hi', 'ar', 'ca', 'hr', 'el', 'hu', 'la', 'fr', 'fi', 'eu', 'ko', 'et', 'id', 'fa', 'uk', 'got', 'pl', 'ug', 'vi', 'da', 'ru', 'gl', 'it', 'cu', 'cs', 'he', 'sr', 'en', 'sk', 'bg', 'sl', 'ur', 'nl', 'lv', 'de', 'ro'];
 local LEFT_LANGS = ['ar', 'he', 'gl', 'pt', 'it', 'id', 'fr', 'es', 'ca', 'el',
 'vi', 'ro', 'cu', 'pl', 'da', 'got', 'sv', 'fa', 'sr', 'no', 'af', 'bg', 'hr'];
-local TRAIN_LANGS = if std.extVar("LEFT") == "true" then LEFT_LANGS else _TRAIN_LANGS;
+local TRAIN_LANGS = _TRAIN_LANGS;
 
 local READERS(xs, alternate=true) = {
     [x]: BASE_READER(x, alternate) for x in xs

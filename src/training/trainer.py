@@ -28,14 +28,13 @@ from allennlp.training.moving_average import MovingAverage
 from allennlp.training.optimizers import Optimizer
 from allennlp.training.trainer_base import TrainerBase
 
-from src.training.wandb_writer import WandBWriter
 from src.training.tensorboard_writer import TensorboardWriter
 from src.training.util import as_flat_dict, filter_state_dict, get_lang_mean
 
 logger = logging.getLogger(__name__)
 
 
-@TrainerBase.register("wandb")
+@TrainerBase.register("fine-tune")
 class Trainer(TrainerBase):
     def __init__(
         self,
@@ -70,7 +69,6 @@ class Trainer(TrainerBase):
         local_rank: int = 0,
         world_size: int = 1,
         num_gradient_accumulation_steps: int = 1,
-        writer: WandBWriter = None,
     ) -> None:
         """
         A trainer for doing supervised learning. It just takes a labeled dataset
@@ -263,16 +261,13 @@ class Trainer(TrainerBase):
         # `_enable_activation_logging`.
         self._batch_num_total = 0
 
-        if writer is not None:
-            self._writer = writer
-        else:
-            self._writer = TensorboardWriter(
-                    get_batch_num_total=lambda: self._batch_num_total,
-                    serialization_dir=serialization_dir,
-                    summary_interval=summary_interval,
-                    histogram_interval=histogram_interval,
-                    should_log_parameter_statistics=should_log_parameter_statistics,
-                    should_log_learning_rate=should_log_learning_rate)
+        self._writer = TensorboardWriter(
+                get_batch_num_total=lambda: self._batch_num_total,
+                serialization_dir=serialization_dir,
+                summary_interval=summary_interval,
+                histogram_interval=histogram_interval,
+                should_log_parameter_statistics=should_log_parameter_statistics,
+                should_log_learning_rate=should_log_learning_rate)
 
         self._log_batch_size_period = log_batch_size_period
 
@@ -843,11 +838,6 @@ class Trainer(TrainerBase):
             except (AttributeError, AssertionError) as e:
                 pass
 
-        writer = None
-        wandb_config = params.pop("wandb", None)
-        if wandb_config is not None:
-            writer = WandBWriter(config, model, wandb_config)
-
         params.assert_empty(cls.__name__)
         return cls(
             model,
@@ -879,5 +869,4 @@ class Trainer(TrainerBase):
             local_rank=local_rank,
             world_size=world_size,
             num_gradient_accumulation_steps=num_gradient_accumulation_steps,
-            writer=writer,
         )

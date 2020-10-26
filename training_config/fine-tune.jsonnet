@@ -66,7 +66,7 @@ local DATA_PATH(lang, split) = UD_ROOT + lang + CV + "**-" + split + ".conllu";
     "train_data_path": DATA_PATH(LANG, "train"),
     "validation_data_path": DATA_PATH(LANG, "dev"),
     "trainer": {
-        "type": "wandb",
+        "type": "fine-tune",
         "cuda_device": 0,
         "num_epochs": NUM_EPOCHS,
         "optimizer": {

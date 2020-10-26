@@ -30,7 +30,6 @@ from allennlp.training.moving_average import MovingAverage
 from allennlp.training.optimizers import Optimizer
 from allennlp.training.trainer_base import TrainerBase
 
-from src.training.wandb_writer import WandBWriter
 from src.training.tensorboard_writer import TensorboardWriter
 from src.training.wrapper import Wrapper
 from src.modules.adv import TaskDiscriminator
@@ -80,7 +79,6 @@ class MetaTrainer(TrainerBase):
         task_discriminator: Optional[TaskDiscriminator] = None,
         discriminator_optimizer: Optional[torch.optim.Optimizer] = None,
         tasks_per_step: int = 0,
-        writer: WandBWriter = None,
     ) -> None:
         """
         A trainer for doing supervised learning. It just takes a labeled dataset
@@ -273,16 +271,13 @@ class MetaTrainer(TrainerBase):
         # `_enable_activation_logging`.
         self._batch_num_total = 0
 
-        if writer is not None:
-            self._writer = writer
-        else:
-            self._writer = TensorboardWriter(
-                    get_batch_num_total=lambda: self._batch_num_total,
-                    serialization_dir=serialization_dir,
-                    summary_interval=summary_interval,
-                    histogram_interval=histogram_interval,
-                    should_log_parameter_statistics=should_log_parameter_statistics,
-                    should_log_learning_rate=should_log_learning_rate)
+        self._writer = TensorboardWriter(
+                get_batch_num_total=lambda: self._batch_num_total,
+                serialization_dir=serialization_dir,
+                summary_interval=summary_interval,
+                histogram_interval=histogram_interval,
+                should_log_parameter_statistics=should_log_parameter_statistics,
+                should_log_learning_rate=should_log_learning_rate)
 
 
         self._log_batch_size_period = log_batch_size_period
@@ -1026,11 +1021,6 @@ class MetaTrainer(TrainerBase):
             task_discriminator = None
             discriminator_optimizer = None
 
-        writer = None
-        wandb_config = params.pop("wandb", None)
-        if wandb_config is not None:
-            writer = WandBWriter(config, wrapper.container, wandb_config)
-
         params.assert_empty(cls.__name__)
         return cls(
             model,
@@ -1067,5 +1057,4 @@ class MetaTrainer(TrainerBase):
             task_discriminator=task_discriminator,
             discriminator_optimizer=discriminator_optimizer,
             tasks_per_step=tasks_per_step,
-            writer=writer,
         )
