@@ -4,8 +4,8 @@
 All of the experiments were conducted on Universal Dependencies:
 - [corpus main page](https://universaldependencies.org/)
 - [data download page](https://lindat.mff.cuni.cz/repository/xmlui/handle/11234/1-3226)
-- [Universal Dependencies v2.2](https://lindat.mff.cuni.cz/repository/xmlui/bitstream/handle/11234/1-3226/ud-treebanks-v2.2.tgz) (we use 46 languages in v2.2 for training; see [data/train_langs.txt](data/train_langs.txt))
-- [Universal Dependencies v2.5](https://lindat.mff.cuni.cz/repository/xmlui/bitstream/handle/11234/1-3226/ud-treebanks-v2.5.tgz) (we use 8 treebanks in v2.5 for testing; see [data/test_tbs-v2.5.txt](data/test_tbs-v2.5.txt))
+- [Universal Dependencies v2.2](https://lindat.mff.cuni.cz/repository/xmlui/bitstream/handle/11234/1-2837/ud-treebanks-v2.2.tgz?sequence=1&isAllowed=y) (we use 46 languages in v2.2 for training; see [data/train_langs.txt](data/train_langs.txt))
+- [Universal Dependencies v2.5](https://lindat.mff.cuni.cz/repository/xmlui/bitstream/handle/11234/1-3105/ud-treebanks-v2.5.tgz?sequence=1&isAllowed=y) (we use 8 treebanks in v2.5 for testing; see [data/test_tbs-v2.5.txt](data/test_tbs-v2.5.txt))
 
 ## Setting up the environment
 1. Set up conda environment:
@@ -19,9 +19,10 @@ pip install -r requirements.txt
 ```
 
 ## Pre-training:
+
 - `UD_GT`: Root path of ground truth universal dependencies treebank files used for evaluation.
 - `UD_ROOT`: Root path of treebank files used for training. For scenarios that use ground truth universal dependencies treebank files for training, simply set it the same as `UD_GT`. For those who would like to use their own POS taggers(e.g. for comparison with [paper](https://www.aclweb.org/anthology/K18-2016.pdf)) as input features for training, put all pos-tagged conllu files in a singler folder and set `UD_ROOT` to it.
-
+- **Normal usage**: simply extract [Universal Dependencies v2.2](https://lindat.mff.cuni.cz/repository/xmlui/bitstream/handle/11234/1-2837/ud-treebanks-v2.2.tgz?sequence=1&isAllowed=y) to some `folder`, then set `UD_GT="folder/**/"` and `UD_ROOT="folder/**/"`.
 ```=bash
 UD_GT="path/to/your/ud-treebanks-v2.2/**/" UD_ROOT="path/to/your/pos-tagged/conllu-files/" python -W ignore run.py train $CONFIG_NAME -s ckpts/<serialization_dir> --include-package src
 ```
