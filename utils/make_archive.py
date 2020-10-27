@@ -53,12 +53,12 @@ def maybe_add_pretrained_embeddings(serialization_dir, weights_file, epoch):
     is_tmp_weight = False
     if torch.cuda.is_available():
         model_state = torch.load(os.path.join(serialization_dir, weights_file))
-        pretrained_model_state = torch.load(os.path.join(f"ckpts/{os.environ['BASE_MODEL']}",
+        pretrained_model_state = torch.load(os.path.join(f"{os.environ['BASE_MODEL']}",
                                                          "model_state_epoch_0.th"))
     else:
         model_state = torch.load(os.path.join(serialization_dir, weights_file),
                                  map_location=torch.device('cpu'))
-        pretrained_model_state = torch.load(os.path.join(f"ckpts/{os.environ['BASE_MODEL']}",
+        pretrained_model_state = torch.load(os.path.join(f"{os.environ['BASE_MODEL']}",
                                                          "model_state_epoch_0.th"),
                                             map_location=torch.device('cpu'))
 
