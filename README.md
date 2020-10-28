@@ -8,12 +8,16 @@ All of the experiments were conducted on Universal Dependencies:
 - [Universal Dependencies v2.5](https://lindat.mff.cuni.cz/repository/xmlui/bitstream/handle/11234/1-3105/ud-treebanks-v2.5.tgz?sequence=1&isAllowed=y) (we use 8 treebanks in v2.5 for testing; see [data/test_tbs-v2.5.txt](data/test_tbs-v2.5.txt))
 
 ## Setting up the environment
-1. Set up conda environment:
+1. Clone this repository:
+```=bash
+git clone https://github.com/Chung-I/maml-parsing.git
+```
+2. Set up conda environment:
 ```=bash
 conda create -n maml-parsing python=3.6
 conda activate maml-parsing
 ```
-2. Install python package requirements:
+3. Install python package requirements:
 ```=bash
 pip install -r requirements.txt
 ```
