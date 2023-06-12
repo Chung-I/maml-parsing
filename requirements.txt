@@ -1,4 +1,4 @@
 git+https://github.com/Chung-I/allennlp.git@no-fine-tune
 matplotlib
 higher
-transformers==2.5.1
+transformers==4.30.0
